@@ -23,6 +23,7 @@ const BASE_AGENT: AgentDetail['agent'] = {
   department: null, module: null, source_file: null,
   max_runs_per_hour: 60, max_writes_per_execution: 100, max_proposals_per_run: 50,
   autonomy_level_set_at: null, autonomy_level_source: null,
+  reports_to_type: null, reports_to_id: null,
   abac_mode_override: null, abac_mode_override_set_at: null, abac_mode_override_set_by: null,
   abac_effective_mode: 'shadow', abac_global_default: 'shadow',
 };

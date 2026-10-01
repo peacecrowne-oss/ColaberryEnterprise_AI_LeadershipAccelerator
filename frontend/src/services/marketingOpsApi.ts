@@ -27,7 +27,7 @@ export async function getNeedsAttention(params?: { brand_id?: string }): Promise
   };
 }
 /** How an account reads on the Overview. Mirrors backend `overviewHealth.AccountHealth`. */
-export type AccountHealth = 'revoked' | 'expired' | 'unhealthy' | 'expiring' | 'ok';
+export type AccountHealth = 'revoked' | 'expired' | 'unhealthy' | 'unselected' | 'expiring' | 'ok';
 
 export interface UpcomingPost {
   id: string;

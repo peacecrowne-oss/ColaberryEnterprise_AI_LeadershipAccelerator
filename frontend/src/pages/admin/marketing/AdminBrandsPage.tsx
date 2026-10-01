@@ -9,6 +9,7 @@ import {
   listChannelAccounts,
   listConnectors,
   revokeChannelAccount,
+  selectChannelAccount,
   startConnect,
   errorMessageOf,
   type ChannelAccount,
@@ -25,7 +26,7 @@ import {
 } from '../../../services/adminBrandApi';
 import { useMarketingBrand } from './MarketingBrandContext';
 import { ALL_BRANDS } from './brandScope';
-import { BRAND_TABS, isBrandTab, setupSummary, type BrandSetupFacts, type BrandTabKey } from './brandSetup';
+import { BRAND_TABS, domainNotice, isBrandTab, setupSummary, type BrandSetupFacts, type BrandTabKey } from './brandSetup';
 import BrandSetupTabs from './BrandSetupTabs';
 import { listItems, type ContentItem } from '../../../services/contentComposerApi';
 
@@ -69,6 +70,8 @@ function AdminBrandsPage() {
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [accountsBusy, setAccountsBusy] = useState(false);
+  /** What choosing a destination did, named rather than left to be inferred from the table. */
+  const [selectNotice, setSelectNotice] = useState<string | null>(null);
   const [connectors, setConnectors] = useState<ConnectorStatus[] | null>(null);
 
   /**
@@ -183,6 +186,27 @@ function AdminBrandsPage() {
     }
   }, [fetchAccounts]);
 
+  /**
+   * Choose which discovered destination this brand posts as. Disconnects the others, so what
+   * happened is reported by name rather than left for the operator to infer from the table.
+   */
+  const handleSelect = useCallback(async (accountId: string) => {
+    setAccountsBusy(true);
+    try {
+      const account = await selectChannelAccount(accountId);
+      const replaced = account.replaced ?? [];
+      setAccountsError(null);
+      setSelectNotice(replaced.length
+        ? `Now posting as ${account.display_name}. Disconnected: ${replaced.map((r) => r.display_name).join(', ')}.`
+        : `Now posting as ${account.display_name}.`);
+      await fetchAccounts();
+    } catch (err) {
+      setAccountsError(errorMessageOf(err, 'That account could not be chosen.'));
+    } finally {
+      setAccountsBusy(false);
+    }
+  }, [fetchAccounts]);
+
   const fetchBrands = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -243,9 +267,12 @@ function AdminBrandsPage() {
   }), [error, loading, fetchedAt, brands.length, scopeMode]);
 
   const live = accounts.filter((a) => !a.revoked_at);
+  // An account still awaiting a choice is not yet a channel this brand can post on, so it does
+  // not count towards "connect a network" being done - it counts as something to attend to.
+  const chosen = live.filter((a) => a.status === 'connected');
   const facts: BrandSetupFacts = {
-    channelCount: live.length,
-    channelsNeedingAttention: live.filter((a) => a.health === 'expired' || a.health === 'unhealthy' || a.health === 'expiring').length,
+    channelCount: chosen.length,
+    channelsNeedingAttention: live.filter((a) => a.status === 'needs_selection' || a.health === 'expired' || a.health === 'unhealthy' || a.health === 'expiring').length,
     domainCount: readiness ? readiness.domains.length : null,
     verifiedDomainCount: readiness ? readiness.domains.filter((d) => d.verification_status === 'verified').length : 0,
     pendingApprovals: awaiting?.length ?? 0,
@@ -262,6 +289,12 @@ function AdminBrandsPage() {
         breadcrumb={[{ label: 'Admin', to: '/admin/dashboard' }, { label: 'Marketing', to: '/admin/marketing' }, { label: 'Brands' }]}
         trust={trust}
       />
+
+      {selectNotice && (
+        <div className="alert alert-success m-3 mb-0 py-2 small" role="status" data-testid="select-notice">
+          {selectNotice}
+        </div>
+      )}
 
       {connectNotice && (
         <div className={`alert alert-${connectNotice.tone} m-3 mb-0 py-2 small`} role="status" data-testid="linkedin-connect-notice">
@@ -290,6 +323,7 @@ function AdminBrandsPage() {
               busy={accountsBusy}
               onConnect={handleConnect}
               onRevoke={handleRevoke}
+              onSelect={handleSelect}
               onRetry={fetchAccounts}
             />
           </SectionCard>
@@ -297,6 +331,11 @@ function AdminBrandsPage() {
 
         {tab === 'domains' && (
           <SectionCard title="Sending domains" subtitle={BRAND_TABS[1].hint} icon="mail-check-line" padded={false}>
+            {/* Said before the table, because the table shows a "pending" column that looks like
+                something you could act on and is not. */}
+            <div className={`alert alert-${domainNotice(facts).tone} m-3 mb-0 py-2 small`} role="status" data-testid="domain-notice">
+              {domainNotice(facts).text}
+            </div>
             <BrandReadinessPanel
               loading={loading}
               error={error}
@@ -416,10 +455,23 @@ export function genericConnectNotice(params: URLSearchParams): { tone: 'success'
 
   if (connected) {
     const n = Number(params.get('count') ?? '1');
+    const choose = Number(params.get('choose') ?? '0');
+    const handoff = `Until direct publishing is switched on for ${name}, its posts are prepared for you to publish by hand.`;
+    // A sign-in that found several destinations on one network connects none of them - a brand
+    // posts as one account per network, so the decision is the operator's. Reporting those in
+    // the same number as the connected ones is how "3 accounts added" once meant one added and
+    // two silently revoked.
+    if (choose > 0) {
+      return {
+        tone: 'success',
+        text: `${name} signed in. ${choose} accounts were found on this network and a brand posts as one, `
+          + `so choose which below - the others will be disconnected.`,
+      };
+    }
     const accounts = `${n} account${n === 1 ? '' : 's'}`;
     return {
       tone: 'success',
-      text: `${name} connected: ${accounts} added to this brand. Until direct publishing is switched on for ${name}, its posts are prepared for you to publish by hand.`,
+      text: `${name} connected: ${accounts} added to this brand. ${handoff}`,
     };
   }
 

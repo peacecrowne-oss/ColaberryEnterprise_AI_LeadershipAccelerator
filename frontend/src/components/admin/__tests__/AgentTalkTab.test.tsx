@@ -67,9 +67,9 @@ const { listDirectives, createDirective, revokeDirective } = require('../../../s
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { getAgentRoleCharter } = require('../../../services/agentRoleCharterApi') as { getAgentRoleCharter: jest.Mock };
 
-const EMPTY_CONVERSATION: Conversation = { conversationId: 'c1', agentId: 'agent-1', messages: [] };
+const EMPTY_CONVERSATION: Conversation = { conversationId: 'c1', agentId: 'agent-1', messages: [], focusedTicketId: null };
 const REAL_CONVERSATION: Conversation = {
-  conversationId: 'c1', agentId: 'agent-1',
+  conversationId: 'c1', agentId: 'agent-1', focusedTicketId: null,
   messages: [
     { id: 'm1', role: 'manager', content: 'Should I hold escalations this week?', createdAt: '2026-09-01T00:00:00Z' },
     { id: 'm2', role: 'agent', content: 'Yes, budget is tight — hold anything under $50 impact.', createdAt: '2026-09-01T00:01:00Z' },
@@ -89,6 +89,7 @@ const BASE_AGENT: AgentDetail['agent'] = {
   department: null, module: null, source_file: null,
   max_runs_per_hour: 60, max_writes_per_execution: 100, max_proposals_per_run: 50,
   autonomy_level_set_at: null, autonomy_level_source: null,
+  reports_to_type: null, reports_to_id: null,
   abac_mode_override: null, abac_mode_override_set_at: null, abac_mode_override_set_by: null,
   abac_effective_mode: 'shadow', abac_global_default: 'shadow',
 };
@@ -161,7 +162,7 @@ const noopNavigate = (_tab: TabKey) => {};
 
 async function renderTab(
   detail: AgentDetail = buildDetail(),
-  extra: { initialDraft?: string | null; onDraftConsumed?: () => void } = {},
+  extra: { initialDraft?: { text: string; ticketId: string | null } | null; onDraftConsumed?: () => void } = {},
 ) {
   await act(async () => {
     root.render(<AgentTalkTab agentId="agent-1" detail={detail} onNavigate={noopNavigate} {...extra} />);
@@ -207,7 +208,7 @@ describe('AgentTalkTab — Ask mode', () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    expect(sendMessage).toHaveBeenCalledWith('agent-1', 'Should I hold escalations this week?');
+    expect(sendMessage).toHaveBeenCalledWith('agent-1', 'Should I hold escalations this week?', undefined);
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(container.textContent).toContain('Yes, budget is tight');
   });
@@ -254,7 +255,7 @@ describe('AgentTalkTab — composer keyboard handling (Track F)', () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    expect(sendMessage).toHaveBeenCalledWith('agent-1', 'hello');
+    expect(sendMessage).toHaveBeenCalledWith('agent-1', 'hello', undefined);
     expect(container.textContent).toContain('Model unavailable');
     expect(textarea.value.endsWith('\n')).toBe(false);
   });
@@ -414,7 +415,7 @@ describe('AgentTalkTab — Shared working context sidebar (Track F)', () => {
 // AskUserQuestion: pre-fill only, never auto-send.
 describe('AgentTalkTab — initialDraft (Work tab "Discuss with Reese")', () => {
   it('copies a real initialDraft into the composer on mount', async () => {
-    await renderTab(buildDetail(), { initialDraft: 'Can you catch me up on ticket #7 — "Student support case"? It\'s currently In Progress.' });
+    await renderTab(buildDetail(), { initialDraft: { text: 'Can you catch me up on ticket #7 — "Student support case"? It\'s currently In Progress.', ticketId: 'ticket-7' } });
 
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
     expect(textarea.value).toBe('Can you catch me up on ticket #7 — "Student support case"? It\'s currently In Progress.');
@@ -424,7 +425,7 @@ describe('AgentTalkTab — initialDraft (Work tab "Discuss with Reese")', () => 
 
   it('calls onDraftConsumed exactly once after copying the draft', async () => {
     const onDraftConsumed = jest.fn();
-    await renderTab(buildDetail(), { initialDraft: 'A real draft.', onDraftConsumed });
+    await renderTab(buildDetail(), { initialDraft: { text: 'A real draft.', ticketId: null }, onDraftConsumed });
     expect(onDraftConsumed).toHaveBeenCalledTimes(1);
   });
 
@@ -439,14 +440,45 @@ describe('AgentTalkTab — initialDraft (Work tab "Discuss with Reese")', () => 
     // 'talk', mounting this component fresh).
     await act(async () => { root.unmount(); });
     root = createRoot(container);
-    await renderTab(buildDetail(), { initialDraft: 'Draft about a ticket.' });
+    await renderTab(buildDetail(), { initialDraft: { text: 'Draft about a ticket.', ticketId: 'ticket-7' } });
 
     const askButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Ask')!;
     expect(askButton.className).toContain('adv2-primary');
   });
 
   it('never sends the draft automatically — a human must still click Send', async () => {
-    await renderTab(buildDetail(), { initialDraft: 'Draft about a ticket.' });
+    await renderTab(buildDetail(), { initialDraft: { text: 'Draft about a ticket.', ticketId: 'ticket-7' } });
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('Reese manager-directed growth mission, Phase 2 — sending the drafted message passes the real ticket id to the API, once', async () => {
+    getConversation.mockResolvedValue(EMPTY_CONVERSATION);
+    sendMessage.mockResolvedValue(EMPTY_CONVERSATION);
+    await renderTab(buildDetail(), { initialDraft: { text: 'Can you catch me up on ticket #7?', ticketId: 'ticket-7' } });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const sendButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Send')!;
+    await act(async () => { sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+    expect(sendMessage).toHaveBeenCalledWith('agent-1', 'Can you catch me up on ticket #7?', 'ticket-7');
+
+    // A second, manually-typed message after the draft was consumed must NOT resend the
+    // same stale ticket id — the binding is one-shot, per the real backend contract.
+    await act(async () => { typeInto(textarea, 'A completely unrelated follow-up.'); });
+    await act(async () => { sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(sendMessage).toHaveBeenLastCalledWith('agent-1', 'A completely unrelated follow-up.', undefined);
+  });
+
+  it('a manager-wide message typed without ever receiving a draft never passes a ticket id', async () => {
+    getConversation.mockResolvedValue(EMPTY_CONVERSATION);
+    sendMessage.mockResolvedValue(EMPTY_CONVERSATION);
+    await renderTab(buildDetail());
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    await act(async () => { typeInto(textarea, 'How are things going generally?'); });
+    const sendButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Send')!;
+    await act(async () => { sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+    expect(sendMessage).toHaveBeenCalledWith('agent-1', 'How are things going generally?', undefined);
   });
 });

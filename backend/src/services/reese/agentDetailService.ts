@@ -54,6 +54,27 @@ async function resolveHumanIdentity(orgMemberId: string): Promise<{ id: string; 
   return { id: member.id, name, email: member.email };
 }
 
+/** Reports-to editor (2026-09-30) — pure extraction of this file's own existing
+ * reports_to-building logic (org-chart hierarchy build, 2026-08-19), so
+ * agentReportsToService.ts's new write path can return the SAME real, recomputed
+ * display shape this file already builds for GET, rather than a second copy of this
+ * logic. Zero behaviour change for this file's own existing call site below. */
+export async function buildReportsToView(agent: AiAgent): Promise<AgentDetailResult['reports_to']> {
+  if (!agent.reports_to_type) return null;
+  const { resolvedHumanId, trail } = await resolveReportsToChainWithTrail(agent);
+  const resolvedHuman = resolvedHumanId ? await resolveHumanIdentity(resolvedHumanId) : null;
+  // Immediate next hop, only when it's an agent (2026-08-23 "link to the
+  // agent they report to" ask) — a single extra lookup, not a second copy
+  // of the recursive chain-walk (that stays the one canonical
+  // implementation in ticketCreatorReportsToResolver.ts).
+  let immediateAgent: { id: string; name: string } | null = null;
+  if (agent.reports_to_type === 'agent' && agent.reports_to_id) {
+    const nextAgent = await AiAgent.findByPk(agent.reports_to_id);
+    if (nextAgent) immediateAgent = { id: nextAgent.id, name: nextAgent.agent_name };
+  }
+  return { trail, resolved_human: resolvedHuman, immediate_agent: immediateAgent };
+}
+
 export async function getAgentDetail(agentId: string): Promise<AgentDetailResult | null> {
   const agent = await AiAgent.findByPk(agentId);
   if (!agent) return null;
@@ -204,21 +225,10 @@ export async function getAgentDetail(agentId: string): Promise<AgentDetailResult
 
   // reports_to (org-chart hierarchy build, 2026-08-19) — null when this agent
   // has no reports_to_type configured at all, never a fabricated empty shape.
-  let reportsTo: AgentDetailResult['reports_to'] = null;
-  if (agent.reports_to_type) {
-    const { resolvedHumanId, trail } = await resolveReportsToChainWithTrail(agent);
-    const resolvedHuman = resolvedHumanId ? await resolveHumanIdentity(resolvedHumanId) : null;
-    // Immediate next hop, only when it's an agent (2026-08-23 "link to the
-    // agent they report to" ask) — a single extra lookup, not a second copy
-    // of the recursive chain-walk (that stays the one canonical
-    // implementation in ticketCreatorReportsToResolver.ts).
-    let immediateAgent: { id: string; name: string } | null = null;
-    if (agent.reports_to_type === 'agent' && agent.reports_to_id) {
-      const nextAgent = await AiAgent.findByPk(agent.reports_to_id);
-      if (nextAgent) immediateAgent = { id: nextAgent.id, name: nextAgent.agent_name };
-    }
-    reportsTo = { trail, resolved_human: resolvedHuman, immediate_agent: immediateAgent };
-  }
+  // buildReportsToView() above is the one canonical builder (extracted 2026-09-30
+  // for the reports-to editor's write path to reuse — pure extraction here, zero
+  // behaviour change).
+  const reportsTo: AgentDetailResult['reports_to'] = await buildReportsToView(agent);
 
   // Task visibility (2026-08-26) — this agent's own real recurring tasks:
   // sibling AiAgent rows sharing its `module` (e.g. 'reese'), excluding
@@ -313,6 +323,8 @@ export async function getAgentDetail(agentId: string): Promise<AgentDetailResult
       max_proposals_per_run: agent.max_proposals_per_run ?? null,
       autonomy_level_set_at: agent.autonomy_level_set_at ?? null,
       autonomy_level_source: agent.autonomy_level_source ?? null,
+      reports_to_type: agent.reports_to_type ?? null,
+      reports_to_id: agent.reports_to_id ?? null,
       abac_mode_override: abacOverride,
       abac_mode_override_set_at: (agent as any).abac_mode_override_set_at ?? null,
       abac_mode_override_set_by: (agent as any).abac_mode_override_set_by ?? null,

@@ -305,6 +305,13 @@ interface AiAgentAttributes {
   // authorization-enforcement switch is more consequential than an autonomy-level choice, so
   // this is a real audit trail: the admin's email/sub, per req.admin in workforceController.ts.
   abac_mode_override_set_by?: string | null;
+  // Reports-to editor (2026-09-30) — null until an admin deliberately changes who this agent
+  // reports to via agentReportsToService.ts. Same audit-trail shape as
+  // abac_mode_override_set_at/_set_by: a misconfigured reports-to chain can silently break
+  // this agent's own ticket creation (enforceReportsToGate()), so this write gets the same
+  // real audit trail, not the sparser autonomy_level_set_at-only precedent.
+  reports_to_set_at?: Date | null;
+  reports_to_set_by?: string | null;
 }
 
 class AiAgent extends Model<AiAgentAttributes> implements AiAgentAttributes {
@@ -350,6 +357,8 @@ class AiAgent extends Model<AiAgentAttributes> implements AiAgentAttributes {
   declare abac_mode_override: 'shadow' | 'enforce' | null;
   declare abac_mode_override_set_at: Date | null;
   declare abac_mode_override_set_by: string | null;
+  declare reports_to_set_at: Date | null;
+  declare reports_to_set_by: string | null;
 }
 
 AiAgent.init(
@@ -542,6 +551,14 @@ AiAgent.init(
       allowNull: true,
     },
     abac_mode_override_set_by: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    reports_to_set_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    reports_to_set_by: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },

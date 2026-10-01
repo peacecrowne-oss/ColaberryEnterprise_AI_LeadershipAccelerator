@@ -39,6 +39,8 @@ export interface ChannelAccountsPanelProps {
   busy: boolean;
   onConnect: (connector: ConnectorKey) => void;
   onRevoke: (accountId: string) => void;
+  /** Choose a discovered destination. Absent when selection is not offered. */
+  onSelect?: (accountId: string) => void;
   onRetry: () => void;
 }
 
@@ -73,6 +75,15 @@ function statusBadge(account: ChannelAccount): { text: string; className: string
   if (account.status === 'disabled') {
     return { text: 'Disabled', className: 'text-bg-secondary', hint: 'Switched off here; the credential is still stored.' };
   }
+  // Discovered by a sign-in that found several destinations on this network, and not yet chosen.
+  // Nothing is broken; a decision is missing, so it reads as a question rather than a fault.
+  if (account.status === 'needs_selection' || account.health === 'unselected') {
+    return {
+      text: 'Not chosen yet',
+      className: 'text-bg-warning',
+      hint: 'This brand posts as one account per network. Choose this one to use it.',
+    };
+  }
   // The server's verdict when it sent one: it knows which networks have a publishing adapter, and
   // an X account whose two-hour access token has lapsed is not "expired" - its refresh token keeps
   // the connection alive. Older backends send no verdict; then the access token decides.
@@ -102,7 +113,10 @@ function expiryText(account: ChannelAccount): string {
 }
 
 export default function ChannelAccountsPanel(props: ChannelAccountsPanelProps) {
-  const { loading, error, vault, accounts, brandId, busy, onConnect, onRevoke, onRetry } = props;
+  const { loading, error, vault, accounts, brandId, busy, onConnect, onRevoke, onSelect, onRetry } = props;
+  // How many destinations are waiting on a decision, so the panel can say it once at the top
+  // rather than leaving it to be spotted in a table row.
+  const awaiting = accounts.filter((a) => a.status === 'needs_selection' && !a.revoked_at);
 
   if (loading) {
     return <div className="p-4 text-muted">Loading connected accounts…</div>;
@@ -148,6 +162,14 @@ export default function ChannelAccountsPanel(props: ChannelAccountsPanelProps) {
         </div>
       ) : (
         <div className="table-responsive">
+          {awaiting.length > 0 && (
+            // One sign-in found several destinations. Said here, once, because a row badge alone
+            // reads as a fault rather than as a decision someone has to make.
+            <div className="alert alert-warning m-3 py-2 small mb-0" role="status" data-testid="selection-needed">
+              This sign-in found {awaiting.length} accounts on the same network. A brand posts as
+              one account per network, so choose which one - the others will be disconnected.
+            </div>
+          )}
           <table className="table table-sm align-middle mb-0">
             <thead className="table-light">
               <tr>
@@ -186,6 +208,20 @@ export default function ChannelAccountsPanel(props: ChannelAccountsPanelProps) {
                       )}
                     </td>
                     <td className="text-end">
+                      {account.status === 'needs_selection' && onSelect && (
+                        // Says what it will do BEFORE the click. Choosing one disconnects the
+                        // others, and being told that afterwards would feel like a bug.
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary me-1"
+                          disabled={busy}
+                          onClick={() => onSelect(account.id)}
+                          title="Use this account for this network, and disconnect the others"
+                          data-testid={`select-${account.id}`}
+                        >
+                          Use this one
+                        </button>
+                      )}
                       {account.status !== 'revoked' && (
                         <button
                           type="button"
@@ -211,7 +247,11 @@ export default function ChannelAccountsPanel(props: ChannelAccountsPanelProps) {
           connectors={props.connectors}
           error={props.connectorsError ?? null}
           connectedByProvider={new Map(
-            accounts.filter((a) => !a.revoked_at).map((a) => [a.provider, a.display_name] as const),
+            // Only a CHOSEN account counts as the brand's connection. One still awaiting a
+            // decision must not make the Connect button warn that it would replace something.
+            accounts
+              .filter((a) => !a.revoked_at && a.status === 'connected')
+              .map((a) => [a.provider, a.display_name] as const),
           )}
           // Disabled for a reason the operator can read, rather than absent (which looks like a
           // missing feature) or enabled (which fails).

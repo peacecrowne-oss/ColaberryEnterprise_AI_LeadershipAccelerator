@@ -5,6 +5,7 @@ import { AgentRoleCharter, getAgentRoleCharter, saveAgentRoleCharter, AgentRoleC
 import { timeAgo } from '../shell/trust';
 import TruncatedText from './TruncatedText';
 import AgentOverviewV2EmployeeFacts from './AgentOverviewV2EmployeeFacts';
+import AgentOverviewV2ReportsToEditor from './AgentOverviewV2ReportsToEditor';
 
 // Agent Detail V2, sidebar (2026-09-11) — Identity, Role Charter, Reports to
 // (chain), Persona/prompt. The mockup Ali pasted didn't include Role
@@ -36,9 +37,10 @@ interface Props {
   detail: AgentDetail;
   agentId: string;
   agentDisplayName: string;
+  onReportsToChanged: () => void;
 }
 
-export default function AgentOverviewV2Sidebar({ detail, agentId, agentDisplayName }: Props) {
+export default function AgentOverviewV2Sidebar({ detail, agentId, agentDisplayName, onReportsToChanged }: Props) {
   const { identity, agent, reports_to, persona_version_history } = detail;
 
   const [charter, setCharter] = useState<AgentRoleCharter | null | undefined>(undefined);
@@ -187,6 +189,13 @@ export default function AgentOverviewV2Sidebar({ detail, agentId, agentDisplayNa
           ) : (
             <p className="adv2-muted">No reports-to chain configured for this agent.</p>
           )}
+          <AgentOverviewV2ReportsToEditor
+            agentId={agentId}
+            agentDisplayName={agentDisplayName}
+            currentReportsToType={agent.reports_to_type}
+            currentReportsToId={agent.reports_to_id}
+            onChanged={onReportsToChanged}
+          />
         </div>
       </section>
 

@@ -41,6 +41,20 @@ import ReleaseRow, {
  * dependency is a decision that belongs to the operator, not to this view.
  */
 
+/**
+ * Who a project belongs to. Interns are the default board; the other two are opt-in.
+ *
+ *     "default it to active intern projects but allow the ability to add class projects
+ *      and unenrolled students projects."  (Ali, 2026-10-01)
+ */
+type Audience = 'intern' | 'class' | 'unenrolled';
+
+const AUDIENCES: Array<{ key: Audience; label: string; hint: string }> = [
+  { key: 'intern', label: 'Interns', hint: 'Holds an active internship' },
+  { key: 'class', label: 'Class', hint: 'Enrolled in a class, not an intern' },
+  { key: 'unenrolled', label: 'Unenrolled', hint: 'In neither — prospect and guest builds' },
+];
+
 interface ReadinessComponent { key: string; label: string; score: number; weight: number; gap?: string }
 interface Readiness { score: number; ready: boolean; components: ReadinessComponent[]; gaps: string[] }
 
@@ -53,8 +67,10 @@ interface ProjectRow {
   cohort_name: string | null;
   stage: string;
   maturity_score: number | null;
-  /** The owner holds an active internship. Shown, not filtered on — see `internsFirst`. */
+  /** The owner holds an active internship. Shown, not filtered on. */
   is_intern: boolean;
+  /** Which group this project's owner is in. Drives the audience filter. */
+  audience: Audience;
   has_repo: boolean;
   repo_url: string | null;
   /** The student's Command Center — a GitHub Pages site at the root of their own repo.
@@ -99,8 +115,14 @@ interface GanttRelease extends ReleaseSummaryLike {
 interface Gantt {
   project_id: string;
   releases: GanttRelease[];
-  /** REQ id -> statement, from the published plan. Empty for a project that has none. */
+  /** REQ id -> statement, from the newest plan. Empty for a project that has none. */
   requirements?: Record<string, string>;
+  /**
+   * These releases came from the PLAN, not from materialised tasks — a build held for
+   * review. Said on screen rather than inferred, because stories with no dates would
+   * otherwise read as a schedule that went missing.
+   */
+  plan_only?: boolean;
   totals: { tasks: number; complete: number; overdue: number; undated: number };
 }
 
@@ -123,22 +145,22 @@ interface Props {
    */
   internsOnly?: boolean;
   /**
-   * Show EVERY project, interns first.
+   * Offer the audience filter, defaulting to interns only.
    *
-   *     "All projects built moving fwd should be assigned to an intern above or shown
-   *      below with drill down. Either way, I should be able to drill down into the
-   *      projects."  (Ali, 2026-09-30)
+   *     "in the Projects section, default it to active intern projects but allow the
+   *      ability to add class projects and unenrolled students projects."
+   *      (Ali, 2026-10-01)
    *
-   * `internsOnly` answered that by hiding the rest, so a project built for a prospect
-   * from the enquiry list was absent from the board rather than merely lower down it.
-   * This orders instead of excluding.
+   * A DEFAULT, not a restriction. `internsOnly` made the other projects unreachable, so a
+   * project built for a prospect from the enquiry list was absent from the only board that
+   * lists projects. This opens with interns and lets the rest be switched on.
    */
-  internsFirst?: boolean;
+  audienceFilter?: boolean;
   /** Hide the "enrolled with no project" panel where it is not the point. */
   hideWithoutProject?: boolean;
 }
 
-export default function ProjectDeliveryView({ cohortId, internsOnly, internsFirst, hideWithoutProject }: Props) {
+export default function ProjectDeliveryView({ cohortId, internsOnly, audienceFilter, hideWithoutProject }: Props) {
   const [rows, setRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +168,9 @@ export default function ProjectDeliveryView({ cohortId, internsOnly, internsFirs
   const [gantt, setGantt] = useState<Record<string, Gantt>>({});
   const [ganttLoading, setGanttLoading] = useState<string | null>(null);
   const [onlyOverdue, setOnlyOverdue] = useState(false);
+  // Opens on interns alone. Never allowed to reach empty: a board with every group
+  // switched off is a blank page that reads as "no projects" rather than as a filter.
+  const [shown, setShown] = useState<Audience[]>(['intern']);
   // Which question the list is answering. Readiness is the default because the
   // page's job is case-study conversion; attention is the inversion of it.
   const [sortMode, setSortMode] = useState<SortMode>('readiness');
@@ -227,13 +252,14 @@ export default function ProjectDeliveryView({ cohortId, internsOnly, internsFirs
 
   const visible = useMemo(
     () => {
-      const sorted = sortRows(onlyOverdue ? rows.filter((r) => r.tasks_overdue > 0) : rows, sortMode);
-      if (!internsFirst) return sorted;
-      // Stable partition, so the chosen sort still decides the order WITHIN each
-      // group and the toggle keeps meaning what it says.
+      const byAudience = audienceFilter ? rows.filter((r) => shown.includes(r.audience)) : rows;
+      const sorted = sortRows(onlyOverdue ? byAudience.filter((r) => r.tasks_overdue > 0) : byAudience, sortMode);
+      if (!audienceFilter) return sorted;
+      // Stable partition, so the chosen sort still decides the order WITHIN each group
+      // and the toggle keeps meaning what it says.
       return [...sorted.filter((r) => r.is_intern), ...sorted.filter((r) => !r.is_intern)];
     },
-    [rows, onlyOverdue, sortMode, internsFirst]
+    [rows, onlyOverdue, sortMode, audienceFilter, shown]
   );
 
   const totals = useMemo(() => ({
@@ -278,6 +304,30 @@ export default function ProjectDeliveryView({ cohortId, internsOnly, internsFirs
               checked={onlyOverdue} onChange={(e) => setOnlyOverdue(e.target.checked)} />
             <label className="form-check-label small" htmlFor="only-overdue">Overdue only</label>
           </div>
+          {audienceFilter && (
+            <div className="btn-group btn-group-sm" role="group" aria-label="Which projects to show">
+              {AUDIENCES.map(({ key, label, hint }) => {
+                const on = shown.includes(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`btn btn-sm ${on ? 'btn-secondary' : 'btn-outline-secondary'}`}
+                    aria-pressed={on}
+                    title={hint}
+                    onClick={() => setShown((cur) => {
+                      const next = cur.includes(key) ? cur.filter((a) => a !== key) : [...cur, key];
+                      // Turning the last one off would render an empty board that reads as
+                      // "there are no projects". Refuse rather than explain it afterwards.
+                      return next.length ? next : cur;
+                    })}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <button className="btn btn-sm btn-outline-secondary" onClick={load}>Refresh</button>
         </div>
       }
@@ -332,7 +382,7 @@ export default function ProjectDeliveryView({ cohortId, internsOnly, internsFirs
                 </span>
                 {/* Only on the boards that mix the two. Marking every intern on an
                     all-intern board is a badge that carries no information. */}
-                {internsFirst && !r.is_intern && (
+                {audienceFilter && shown.length > 1 && r.audience !== 'intern' && (
                   <span
                     className="ms-2"
                     style={{
@@ -340,9 +390,11 @@ export default function ProjectDeliveryView({ cohortId, internsOnly, internsFirs
                       color: 'var(--text-muted)', border: '1px solid var(--border-subtle, #dee2e6)',
                       borderRadius: 3, padding: '0 5px', textTransform: 'uppercase',
                     }}
-                    title="This project's owner does not hold an active internship"
+                    title={r.audience === 'class'
+                      ? 'A class student, not an intern'
+                      : 'Not enrolled in a class or an internship'}
                   >
-                    not an intern
+                    {r.audience}
                   </span>
                 )}
                 <RiskPill risk={r.risk} />
@@ -421,6 +473,22 @@ export default function ProjectDeliveryView({ cohortId, internsOnly, internsFirs
 
                 {/* The release table. Each row expands to its stories, so the spine and
                     the work sit in one place rather than in separate panels. */}
+                {/* A build held for review has a plan and no tasks. Say which you are
+                    looking at: the stories are real, the absent dates are not a fault. */}
+                {g?.plan_only && (
+                  <div
+                    className="mb-2"
+                    style={{
+                      border: '0.5px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+                      background: 'var(--surface-subtle, #f8f9fa)', padding: '7px 10px', fontSize: 12.5,
+                    }}
+                  >
+                    <strong>Not assigned yet.</strong> This is the plan as built — releases and
+                    stories, with the requirements each one fulfils. Dates and progress appear once
+                    it is assigned, and nobody but you can see it until then.
+                  </div>
+                )}
+
                 {g && g.totals.tasks > 0 && (
                   <div style={{
                     border: '0.5px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',

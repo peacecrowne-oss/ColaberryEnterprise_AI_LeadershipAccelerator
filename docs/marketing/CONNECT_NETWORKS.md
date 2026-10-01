@@ -70,32 +70,130 @@ existing app (which also serves a Bubble app) cannot be reused and must not be t
 
 ## Facebook Pages and Instagram (one Meta app covers both)
 
-1. https://developers.facebook.com/apps → **Create app** → type **Business**, attached to
-   Colaberry's Meta Business portfolio.
-2. Add the **Facebook Login for Business** product.
-   - **Settings** → **Valid OAuth Redirect URIs** → add the Meta redirect URL above.
-   - **Configurations** → create one: token type **User access token**, with the permissions
-     `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`,
-     `instagram_content_publish`, `business_management`. Copy the configuration's **ID**.
-3. **App roles** → add Ali, Sohail and Aleem as **Administrators** or **Testers**. Until Meta
-   grants Advanced Access (App Review, plus Business Verification), only people with a role on
-   the app can connect. For Colaberry posting to its own Pages, that is enough indefinitely.
-4. **Settings → Basic** → copy the **App ID** and **App Secret**.
-5. Server variables: `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID` (the
-   configuration ID from step 2).
-6. **Instagram** must be a **Business or Creator** account, linked to a Facebook Page you
-   administer. In the Facebook sign-in window, tick the Pages to connect; each one's linked
-   Instagram account connects with it.
-7. To post directly once connected, add `meta_facebook_page` and/or `meta_instagram` to
-   `LIVE_CONNECTORS` and restart. Facebook also needs its App Review submitted before the
-   platform will treat it as direct - the Composer says so on the post itself.
+**Walked end to end on 2026-09-30 and corrected against what the console actually does.** The
+previous version of this section was written from documentation and was wrong in five places;
+each is called out below as a trap, because every one of them costs twenty minutes.
 
-What Facebook and Instagram accept once switched on: text, one photo, up to 10 photos as a
-carousel, or one MP4. Instagram has no text-only post. Meta FETCHES each attachment from a
-short-lived signed URL on `www.refactored.ai`, so that host must stay reachable at publish time.
+### 1. Create the app
 
-Limits: Instagram allows 100 API-published posts per account per 24 hours. Instagram has no
-text-only posts; every post needs an image or video.
+https://developers.facebook.com/apps -> **Create app**. The wizard is App details -> Use cases
+-> Business -> Requirements -> Overview.
+
+- On **Use cases**, the option you want is **Other**, and it is NOT in the Featured six. Click
+  the **Others** filter on the left to find it. Picking a featured use case makes Meta wire up
+  its own permission set and login configuration, which you then have to work around.
+- On **Business**, "No businesses available" is FINE. Click Next. A verified business portfolio
+  is only needed for App Review, which this setup does not require - see step 6.
+- "No requirements identified" on the Requirements step is expected.
+
+Leave the app **Unpublished**. That is the steady state, not a stopgap.
+
+### 2. Add the two use cases
+
+Dashboard -> **Add use cases** -> filter **Content management**, and tick BOTH:
+
+- **Manage everything on your Page** -> `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`
+- **Manage messaging & content on Instagram** -> the Instagram permissions, via step 3
+
+**TRAP: permissions come from the USE CASES, not from the login configuration.** The
+configuration can only offer permissions the app has already been granted. Create it first and
+its dropdown offers two, which looks broken and is not.
+
+Adding these also installs **Facebook Login for Business** in the left nav. There is no
+"Add product" menu in this console; that is how the product arrives.
+
+### 3. Point Instagram at the FACEBOOK login path
+
+Opening the Instagram use case lands you on **API setup with Instagram login**. That is the
+wrong path for us: it has its own app id and secret and uses `instagram_business_*` permissions,
+none of which this platform calls.
+
+In the left sub-nav click **API setup with Facebook login**, then **Add required content
+permissions**. That grants `instagram_basic` and `instagram_content_publish`.
+
+Do NOT click **Add required messaging permissions** - it adds `instagram_manage_messages` for
+DMs, which nothing here uses.
+
+**TRAP: the Instagram app secret shown on that screen is not the one you need.** `META_APP_SECRET`
+is the main app's secret, from App settings -> Basic.
+
+### 4. Register the redirect URI in the right field
+
+**TRAP, and the expensive one.** App settings -> Advanced -> App authentication -> **Authorize
+callback URL** is NOT the field Facebook Login for Business reads. Putting the URL only there
+leaves the sign-in failing with an unhelpful error.
+
+The field that matters: **Facebook Login for Business -> Settings -> Valid OAuth Redirect URIs**.
+
+- It is a chip input. Paste, then press **Enter** so it becomes a tag, then **Save changes** at
+  the bottom of the page, then reload and confirm it survived.
+- Same page, **Redirect URI Validator**: paste the URL and press **Check URI**. It tells you what
+  Meta will actually accept. Use it - it is free proof, and "invalid redirect URI" here means the
+  save did not take.
+- Confirm **Client OAuth login**, **Web OAuth login** and **Use Strict Mode** are all Yes.
+
+### 5. Create the login configuration
+
+**Facebook Login for Business -> Configurations -> Create configuration.**
+
+- **Access token type: User access token.** Not System user. A system-user token skips the
+  operator's own Page choice entirely, so nothing useful connects and no error explains why.
+  The confirmation you chose correctly is Meta telling you *"You can't select assets because you
+  chose to use a user access token"*.
+- Permissions: `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`,
+  `instagram_basic`, `instagram_content_publish`, and `business_management` if offered.
+
+Copy the **Configuration ID**. It becomes `META_LOGIN_CONFIG_ID`.
+
+### 6. App roles decide who can connect
+
+**App roles -> Add People -> Administrator or Tester.** Until Meta grants Advanced Access
+(App Review plus Business Verification), only people with a role on the app can complete the
+sign-in, and only for Pages they administer.
+
+For Colaberry posting to its own Pages that is permanent, not temporary. App Review is needed
+only to let people WITHOUT a role connect their own Pages.
+
+### 7. Server variables
+
+```
+META_APP_ID            # App settings -> Basic
+META_APP_SECRET        # App settings -> Basic -> Show (the MAIN app, not Instagram's)
+META_LOGIN_CONFIG_ID   # from step 5
+META_GRAPH_VERSION     # optional; match the app's version, e.g. v26.0
+```
+
+They live in `/opt/colaberry-accelerator/.env` and are read at call time, so activation is "set
+them, restart the backend". The redirect base URL is `MARKETING_OAUTH_BASE_URL` when set,
+otherwise the origin of `LINKEDIN_REDIRECT_URI` - one fact, not two to keep in step.
+
+### 8. Connect, and check it actually worked
+
+Brands -> pick the brand -> Channels -> Connect on Facebook & Instagram. Tick the Pages you
+want; each one's linked Instagram professional account connects with it.
+
+The check that matters is **`token_expires_at` IS NULL** on the stored credential. Meta's ladder
+is short-lived user token -> long-lived user token -> Page token, and only the last never
+expires. If you see an expiry a couple of hours out, the ladder was skipped: the account will
+read as healthy tonight and fail every post tomorrow morning.
+
+### 9. Switching direct publishing on
+
+Two gates, and BOTH must be satisfied - this is not obvious and cost a round trip on 2026-09-30:
+
+1. `LIVE_CONNECTORS` must name the provider (`meta_facebook_page`, `meta_instagram`).
+2. `appReview.status` in `providerCapabilities.ts` must be `approved` or `self_serve`.
+
+Both Meta providers are `self_serve` as of 2026-09-30, verified against the live API rather than
+assumed: a real Page post returned HTTP 200 and a post id, and an Instagram media container was
+created, both with the app unpublished and no App Review. Standard Access covers app-role users
+posting to their own Pages.
+
+What Facebook and Instagram accept: text, one photo, up to 10 photos as a carousel, or one MP4.
+Instagram has NO text-only post. Meta FETCHES each attachment from a short-lived signed URL on
+`www.refactored.ai`, so that host must stay reachable at publish time.
+
+Limits: Instagram allows 100 API-published posts per account per 24 hours.
 
 ## YouTube
 

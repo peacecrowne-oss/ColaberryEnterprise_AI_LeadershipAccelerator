@@ -45,6 +45,9 @@ export function presentHealth(health: AccountHealth): HealthPresentation {
     case 'expiring': return { label: 'Expiring soon', tone: 'warning', usable: true };
     case 'expired': return { label: 'Token expired', tone: 'danger', usable: false };
     case 'unhealthy': return { label: 'Needs reconnecting', tone: 'danger', usable: false };
+    // Nothing is broken and nothing is expiring: one sign-in found several destinations and
+    // nobody has said which this brand uses. Amber, because the fix is a choice, not a repair.
+    case 'unselected': return { label: 'Not chosen yet', tone: 'warning', usable: false };
     case 'revoked': return { label: 'Disconnected', tone: 'secondary', usable: false };
   }
 }

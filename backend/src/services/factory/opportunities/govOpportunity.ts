@@ -3,11 +3,15 @@
  * requires qualification, never a recommended pursuit. This is the explicit browser allowlist: we map only
  * these fields from the (much richer) upstream Opportunity Pulse row and never forward the whole response.
  *
- * Evidence discipline (Phase 1): the source's free-text overview/strategy/submissionRequirements/rawText are
- * UNVERIFIED and are deliberately NOT surfaced here — they must not become confirmed requirements. A null
- * vetVerdict means UNASSESSED (never approved). A value with no verified provenance is shown as unverified and
- * never counted as forecast revenue. `enrichedAt` is freshness of enrichment, NOT proof the portal/amendments
- * were re-checked.
+ * Evidence discipline (Phase 1): the source's free-text submissionRequirements/rawText are UNVERIFIED and are
+ * deliberately NOT surfaced here — they must not become confirmed requirements. The ONLY exception is
+ * `preliminarySummary` (overview/strategy): a read-only, clearly-labeled "preliminary, unverified" blurb shown in
+ * the discovery Details popup so a reviewer can get a sense of a candidate BEFORE downloading requirements. It is
+ * display-only on the v1 discovery feed and can NEVER become a confirmed requirement — qualification requirements,
+ * evidence coverage, and pursuit approval are served by the SEPARATE opDetailClient (v2) path, which does not read
+ * this field. A null vetVerdict means UNASSESSED (never approved). A value with no verified provenance is shown as
+ * unverified and never counted as forecast revenue. `enrichedAt` is freshness of enrichment, NOT proof the
+ * portal/amendments were re-checked.
  */
 export type PursuitStatus = 'none' | 'pursuing' | 'submitted' | 'declined';
 
@@ -65,6 +69,13 @@ export interface GovOpportunity {
   vetVerdictPresent?: boolean;
   /** Freshness signals — enrichment/attachment fetch times. Not proof the live portal was just checked. */
   freshness?: { enrichedAt: string | null; attachmentsFetchedAt: string | null } | null;
+  /**
+   * OP's PRELIMINARY, UNVERIFIED project blurb (from the source's overview/strategy free text), length-capped and
+   * display-only. Shown in the discovery Details popup so a reviewer gets a sense of a candidate before downloading
+   * requirements. NEVER a confirmed requirement and never read by the qualification/coverage/approval path. null
+   * when the source supplied no usable text.
+   */
+  preliminarySummary?: string | null;
 }
 
 /** Why a feed degraded to the snapshot: a deliberate dark state vs a configured feed that actually FAILED. */
@@ -78,6 +89,10 @@ export interface GovOpportunityFeed {
   snapshotDate: string | null;
   /** When source==='snapshot': 'not_configured' (dark) vs 'source_failed' (configured but errored). null when live. */
   snapshotReason?: SnapshotReason | null;
+  /** How many the source reported in total (from OP pagination.total) before this page/limit; null when unknown. */
+  totalAvailable?: number | null;
+  /** How many returned rows were hidden by active team dismissals (added by the route after filtering); 0 if none. */
+  dismissedCount?: number | null;
 }
 
 /**

@@ -91,28 +91,30 @@ describe('ComposerSetup poll', () => {
 });
 
 describe('ComposerSetup content type', () => {
-  it('says, at the moment a media type is chosen, where the file gets attached', () => {
-    // The trap Ali hit: "image" selected, nothing attached, blocked two steps later at
-    // validation with a message about media items. Say it here instead, and point at the
-    // control that resolves it rather than at a workaround.
+  it('says WHAT to attach, now that the upload sits in this section', () => {
+    // These two assertions used to check for "attach the file under Channels › Media" and for
+    // option labels carrying the same. Both were right until 2026-10-01, when the upload moved
+    // into Setup beside the content type - Ali: "the video should be uploaded at the time you
+    // select that you want a video." Pointing somewhere else is now the wrong thing to say.
     render({ values: { ...VALUES, content_type: 'image' } });
-    const warning = container.querySelector('[data-testid="media-type-warning"]')!;
-    expect(warning).not.toBeNull();
-    expect(warning.textContent).toMatch(/does not create one/);
-    expect(warning.textContent).toMatch(/Channels › Media/);
-    expect(warning.textContent).not.toMatch(/not available/);
+    const hint = container.querySelector('[data-testid="media-type-hint"]')!;
+    expect(hint).not.toBeNull();
+    expect(hint.textContent).toMatch(/PNG, JPEG or GIF/);
+    expect(hint.textContent).not.toMatch(/Channels/);
   });
 
-  it('says nothing for a text post, which works end to end today', () => {
+  it('says nothing for a text post, which takes no file at all', () => {
     render({ values: { ...VALUES, content_type: 'text' } });
-    expect(container.querySelector('[data-testid="media-type-warning"]')).toBeNull();
+    expect(container.querySelector('[data-testid="media-type-hint"]')).toBeNull();
   });
 
-  it('labels the media options in the dropdown itself with where the file goes', () => {
+  it('leaves the dropdown as plain type names, the destination having moved out of it', () => {
     render();
     const options = Array.from(container.querySelectorAll('#composer-type option')).map((o) => o.textContent);
-    expect(options).toContain('image (attach a file under Channels)');
-    expect(options).toContain('document (a PDF carousel, LinkedIn only - attach it under Channels)');
+    expect(options).toContain('image');
+    expect(options).toContain('document');
     expect(options).toContain('text');
+    // No option may still advertise a place to attach the file.
+    expect(options.join(' ')).not.toMatch(/Channels/);
   });
 });

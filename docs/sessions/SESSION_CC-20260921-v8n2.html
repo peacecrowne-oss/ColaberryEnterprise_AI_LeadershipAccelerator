@@ -56,8 +56,8 @@
   <header>
     <div class="eyebrow">Colaberry Accelerator · Session Change Report</div>
     <h1>What changed this session</h1>
-    <div class="meta">Generated Wednesday, September 30, 2026 at 6:39 PM</div>
-    <div><span class="sid">CC-20260921-v8n2</span><span class="count">18 changes</span></div>
+    <div class="meta">Generated Thursday, October 1, 2026 at 7:16 AM</div>
+    <div><span class="sid">CC-20260921-v8n2</span><span class="count">23 changes</span></div>
   </header>
   <main>
     
@@ -327,6 +327,81 @@
           <div class="row"><span class="k">Verification</span><span class="v ver">a safety rail refused the whole transaction if ANY completed task would be</span></div>
           
         <div class="row"><span class="k">Notes</span><span class="v">this was run as a script rather than through a route, so it does not ship. Recorded</span></div>
+          
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <span class="num">19</span>
+          <h2>The requirements loss and the hold that a restart removed, both measured on production</h2>
+          <span class="badge">2026-10-01</span>
+        </div>
+        <div class="card-body">
+          <div class="row"><span class="k">What changed</span><span class="v"></span></div>
+          <div class="row"><span class="k">Verification</span><span class="v ver">67 suites / 1369 tests green across `src/services/delivery`,</span></div>
+          
+        <div class="row"><span class="k">Notes</span><span class="v">the new `requirements` dimension changed a contract 12 modules consume and broke</span></div>
+          
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <span class="num">20</span>
+          <h2>Projects board: default to interns, with class and unenrolled on demand</h2>
+          <span class="badge">2026-10-01</span>
+        </div>
+        <div class="card-body">
+          <div class="row"><span class="k">What changed</span><span class="v"></span></div>
+          <div class="row"><span class="k">Verification</span><span class="v ver">36 backend tests green on `projectDelivery*`, 63 frontend board tests green via</span></div>
+          
+        <div class="row"><span class="k">Notes</span><span class="v">this replaces yesterday&#39;s `internsFirst`, which showed everything always. Ali wanted a</span></div>
+          
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <span class="num">21</span>
+          <h2>Clear the test projects from Ali&#39;s own queue</h2>
+          <span class="badge">2026-10-01</span>
+        </div>
+        <div class="card-body">
+          <div class="row"><span class="k">What changed</span><span class="v"></span></div>
+          <div class="row"><span class="k">Verification</span><span class="v ver">dry run first, printed keep and delete sets before anything was touched. A rail</span></div>
+          
+        <div class="row"><span class="k">Notes</span><span class="v">ran as a script, so nothing ships; recorded because it changed production data.</span></div>
+          
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <span class="num">22</span>
+          <h2>A build held for review is reviewable: the admin drill-down reads the drafted plan</h2>
+          <span class="badge">2026-10-01</span>
+        </div>
+        <div class="card-body">
+          <div class="row"><span class="k">What changed</span><span class="v"></span></div>
+          <div class="row"><span class="k">Verification</span><span class="v ver">42 green across the three `projectDelivery*` suites, 15 of them in the</span></div>
+          
+        <div class="row"><span class="k">Notes</span><span class="v">FOUR type errors in this change were caught by `tsc` AFTER jest had passed 42 tests.</span></div>
+          
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <span class="num">23</span>
+          <h2>e2e: a build held for review is reviewable, proven through the real request path</h2>
+          <span class="badge">2026-10-01</span>
+        </div>
+        <div class="card-body">
+          <div class="row"><span class="k">What changed</span><span class="v"></span></div>
+          <div class="row"><span class="k">Verification</span><span class="v ver">15/15 against production. Unauthenticated read refused; `plan_only` true;</span></div>
+          
+        <div class="row"><span class="k">Notes</span><span class="v">the first run FAILED honestly and usefully - `student_tasks.task_list_id` is NOT</span></div>
           
         </div>
       </article>

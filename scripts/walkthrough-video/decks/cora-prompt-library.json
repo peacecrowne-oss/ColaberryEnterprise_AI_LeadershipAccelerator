@@ -1,0 +1,112 @@
+{
+  "slug": "the-prompt-was-versioned-the-text-kept-changing",
+  "output": "cora-prompt-library-walkthrough.mp4",
+  "slides": [
+    {
+      "kind": "title",
+      "seconds": 10,
+      "title": "The Prompt Was Versioned. The Text Kept Changing.",
+      "subtitle": "An admissions calling platform. Code read at the commit pinned on 19 September 2026, rows read on 28 September 2026.",
+      "caption": "Every answer this platform's AI writes is stamped with the prompt family, the version and the model that produced it."
+    },
+    {
+      "kind": "title",
+      "seconds": 10,
+      "title": "The stamp is real.",
+      "subtitle": "Every AI result row carries a family, a version and a model.",
+      "caption": "Across every stamped row there is one version and one model, and not a single row is missing its stamp."
+    },
+    {
+      "kind": "cards",
+      "seconds": 8,
+      "rows": [
+        [
+          "1 version",
+          "across every stamped row in the two result tables"
+        ],
+        [
+          "0 of 8,841",
+          "stamped rows missing a family, a version or a model"
+        ],
+        [
+          "1 model",
+          "distinct models across every stamped row"
+        ]
+      ],
+      "accent_index": 0,
+      "caption": "Read from the platform's own tables on 28 September 2026."
+    },
+    {
+      "kind": "screenshot",
+      "seconds": 12,
+      "path": "C:/Users/ali_m/Downloads/acc-case-study-visual-wt/.loop-architect/runs/20260928-cora-09-build/imagery/captures/shot-cora-prompt-version-rows.png",
+      "caption": "The stamp, on a keyless local copy of the platform at the pinned commit seeded with invented rows. Three prompt families, every one of them at the same version."
+    },
+    {
+      "kind": "title",
+      "seconds": 10,
+      "title": "The version did not move. The text did.",
+      "subtitle": "Two edits landed on prompt text without the version changing.",
+      "caption": "A version is a promise that the same text produced the same answers, and two edits to prompt text landed without it changing."
+    },
+    {
+      "kind": "cards",
+      "seconds": 10,
+      "rows": [
+        [
+          "2,909 of 8,841",
+          "stamped rows produced by prompt text that changed under an unchanged version"
+        ],
+        [
+          "3 of 9",
+          "registered family and version pairs that appear on any stamped row"
+        ],
+        [
+          "3 of 6",
+          "registered prompt families that appear on any stamped row"
+        ]
+      ],
+      "accent_index": 0,
+      "caption": "Six families are registered and three of them ever ran, so most of the library is a catalogue of things nothing calls."
+    },
+    {
+      "kind": "screenshot",
+      "seconds": 11,
+      "path": "C:/Users/ali_m/Downloads/acc-case-study-visual-wt/.loop-architect/runs/20260928-cora-09-build/imagery/captures/shot-cora-ai-surface.png",
+      "caption": "The page that reports on the AI's own output names the calls, the intents and the consent split, and never names the prompt behind any of them."
+    },
+    {
+      "kind": "screenshot",
+      "seconds": 11,
+      "path": "C:/Users/ali_m/Downloads/acc-case-study-visual-wt/.loop-architect/runs/20260928-cora-09-build/imagery/captures/shot-cora-config-surface.png",
+      "caption": "Every setting an operator can change, and none of them is a prompt. The text lives in source files, so changing a word is a deploy."
+    },
+    {
+      "kind": "cards",
+      "seconds": 8,
+      "rows": [
+        [
+          "25,939 bytes",
+          "of prompt text sent to a lead with no version and no stamp"
+        ],
+        [
+          "4 of 6",
+          "families imported by the package whose docstring says it registers them"
+        ],
+        [
+          "2,900 of 2,957",
+          "calls carrying exactly two classification rows"
+        ]
+      ],
+      "accent_index": 0,
+      "caption": "The voice script is prompt text too, and it carries no version at all."
+    },
+    {
+      "kind": "title",
+      "seconds": 10,
+      "title": "A stamp that cannot tell you which text ran.",
+      "subtitle": "The version is recorded on every row and displayed on no screen.",
+      "caption": "The stamp is not the problem. A stamp that cannot tell you which text ran is the problem, and no screen in the product shows it."
+    }
+  ]
+}

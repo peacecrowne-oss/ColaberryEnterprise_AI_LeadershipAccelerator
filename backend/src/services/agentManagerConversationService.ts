@@ -1,8 +1,14 @@
 import AiAgent from '../models/AiAgent';
+import AdminUser from '../models/AdminUser';
+import Ticket from '../models/Ticket';
 import AgentManagerConversation from '../models/AgentManagerConversation';
 import AgentManagerMessage from '../models/AgentManagerMessage';
 import { getInstrumentedOpenAI } from './openaiInstrumented';
-import { buildAgentManagerConversationSystemPrompt } from './agentBlueprint/agentManagerConversationPrompt';
+import { buildAgentManagerConversationSystemPrompt, FocusedCaseContext } from './agentBlueprint/agentManagerConversationPrompt';
+import { buildCreatorIdMatchList } from './agentBlueprint/legacyCreatorAliases';
+import { generateTicketSummary } from './workLedger/summaryGeneratorService';
+import { getEvidenceForTicket } from './evidence/evidenceService';
+import { getDecisionsForTicket } from './evidence/decisionRecordService';
 import {
   applyConfirmedReliabilityChange, buildConfirmationCardText, detectConfirmationReply, detectReliabilityIntent, toPendingConfirmation,
 } from './managerReliabilityIntentService';
@@ -67,6 +73,19 @@ export class AgentNotFoundError extends Error {
   }
 }
 
+/** Reese manager-directed growth mission, Phase 2 (2026-09-30) — thrown whether the real
+ * ticket id doesn't exist at all, OR exists but isn't this agent's, with an identical generic
+ * message either way (matches A04: deny without leaking existence/content). */
+export class TicketNotAccessibleError extends Error {
+  readonly error_class = 'TicketNotAccessibleError' as const;
+  readonly status = 404;
+
+  constructor() {
+    super('That case was not found.');
+    this.name = 'TicketNotAccessibleError';
+  }
+}
+
 export interface ConversationMessageView {
   id: string;
   role: 'manager' | 'agent';
@@ -78,6 +97,64 @@ export interface ConversationView {
   conversationId: string;
   agentId: string;
   messages: ConversationMessageView[];
+  focusedTicketId: string | null;
+}
+
+/**
+ * Closes a real, pre-existing gap found during this mission's discovery:
+ * ticketRoutes.ts's summary/evidence/decisions endpoints have no per-ticket ownership check
+ * at all (bare requireAdmin only) — any authenticated admin can fetch any ticket by id. This
+ * new manager-chat retrieval path must not inherit that gap. Covers BOTH real assignment
+ * conventions discovery found: assigned_to_type:'ai_staff' (the deterministic reply
+ * pipeline's own tickets, matched via buildCreatorIdMatchList the same way
+ * liveAgentsService.ts's own ticket-ownership queries already do) and
+ * assigned_to_type:'agent' (the org-chart task-assignment path — a real type MISMATCH this
+ * mission separately found, not one to silently repeat by checking only the first
+ * convention). Throws the same generic TicketNotAccessibleError whether the ticket doesn't
+ * exist or exists but isn't this agent's — never distinguishing the two, so this can't be
+ * used to probe for the existence of a ticket the caller can't see.
+ */
+async function assertTicketBelongsToAgent(ticketId: string, agent: AiAgent): Promise<void> {
+  const ticket = await Ticket.findByPk(ticketId, { attributes: ['id', 'assigned_to_type', 'assigned_to_id', 'created_by_id'] });
+  if (!ticket) throw new TicketNotAccessibleError();
+
+  const adminUser = await AdminUser.findOne({ where: { agent_id: agent.id } });
+  const matchList = adminUser ? buildCreatorIdMatchList(adminUser.id, agent) : [];
+
+  const belongs =
+    (ticket.assigned_to_type === 'ai_staff' && !!ticket.assigned_to_id && matchList.includes(ticket.assigned_to_id)) ||
+    (ticket.assigned_to_type === 'agent' && ticket.assigned_to_id === agent.id) ||
+    (!!ticket.created_by_id && matchList.includes(ticket.created_by_id));
+
+  if (!belongs) throw new TicketNotAccessibleError();
+}
+
+/**
+ * Real per-ticket retrieval for the manager-chat prompt, reusing (not duplicating) the same
+ * generateTicketSummary()/getEvidenceForTicket()/getDecisionsForTicket() this exact page
+ * already proves out elsewhere (StoryTab.tsx, AgentWorkV2CaseDetail.tsx's "Explain this
+ * decision"). Bounded to one ticket's real summary/evidence/decision counts, never an
+ * unbounded history dump. Returns null only when the ticket itself has vanished between the
+ * bind and this fetch — an edge case to degrade honestly from, not throw on mid-conversation.
+ */
+async function buildFocusedCaseContext(ticketId: string): Promise<FocusedCaseContext | null> {
+  const ticket = await Ticket.findByPk(ticketId, { attributes: ['id', 'title', 'description', 'status', 'ticket_number'] });
+  if (!ticket) return null;
+  const [summary, evidence, decisions] = await Promise.all([
+    generateTicketSummary(ticketId),
+    getEvidenceForTicket(ticketId),
+    getDecisionsForTicket(ticketId),
+  ]);
+  return {
+    ticketId,
+    ticketNumber: ticket.ticket_number ?? null,
+    title: ticket.title,
+    description: ticket.description,
+    status: ticket.status,
+    summary,
+    evidenceCount: evidence.length,
+    decisionCount: decisions.length,
+  };
 }
 
 function toMessageView(row: AgentManagerMessage): ConversationMessageView {
@@ -130,7 +207,7 @@ export async function getConversationHistory(agentId: string, participantEmail: 
 
   const conversation = await getOrCreateConversation(agentId, participantEmail, null);
   const rows = await fetchRecentMessagesChronological(conversation.id);
-  return { conversationId: conversation.id, agentId, messages: rows.map(toMessageView) };
+  return { conversationId: conversation.id, agentId, messages: rows.map(toMessageView), focusedTicketId: conversation.focused_ticket_id };
 }
 
 /**
@@ -342,7 +419,7 @@ async function persistAgentReplyAndReturnView(
 ): Promise<ConversationView> {
   await AgentManagerMessage.create({ conversation_id: conversation.id, role: 'agent', content: replyText });
   const rows = await fetchRecentMessagesChronological(conversation.id);
-  return { conversationId: conversation.id, agentId, messages: rows.map(toMessageView) };
+  return { conversationId: conversation.id, agentId, messages: rows.map(toMessageView), focusedTicketId: conversation.focused_ticket_id };
 }
 
 /**
@@ -357,11 +434,21 @@ export async function sendManagerMessage(
   participantEmail: string,
   participantOrgMemberId: string | null,
   messageText: string,
+  ticketId: string | null = null,
 ): Promise<ConversationView> {
   const agent = await AiAgent.findByPk(agentId);
   if (!agent) throw new AgentNotFoundError(agentId);
 
   const conversation = await getOrCreateConversation(agentId, participantEmail, participantOrgMemberId);
+
+  // Reese manager-directed growth mission, Phase 2 (2026-09-30) — bind or explicitly switch
+  // the conversation's focused case BEFORE any reply logic runs. A manager-wide message
+  // (ticketId null) reuses whatever case is already bound, unchanged — purely additive to
+  // every existing reply path below. Authorization happens here, not merely display-side.
+  if (ticketId && ticketId !== conversation.focused_ticket_id) {
+    await assertTicketBelongsToAgent(ticketId, agent);
+    await conversation.update({ focused_ticket_id: ticketId });
+  }
 
   await AgentManagerMessage.create({ conversation_id: conversation.id, role: 'manager', content: messageText });
 
@@ -405,7 +492,15 @@ export async function sendManagerMessage(
 
   const ordered = await fetchRecentMessagesChronological(conversation.id);
 
-  const systemPrompt = await buildAgentManagerConversationSystemPrompt(agentId, agent.agent_name, agent.system_prompt);
+  // Reese manager-directed growth mission, Phase 2 (2026-09-30) — the actual fix: a bound
+  // case's real summary/evidence/decisions are retrieved and cited, instead of the generic
+  // "3 most-recently-updated tickets" summary this prompt builder already injected (which
+  // may not even include the ticket the manager is asking about).
+  const focusedCaseContext = conversation.focused_ticket_id
+    ? await buildFocusedCaseContext(conversation.focused_ticket_id)
+    : null;
+
+  const systemPrompt = await buildAgentManagerConversationSystemPrompt(agentId, agent.agent_name, agent.system_prompt, focusedCaseContext);
   const openai = getInstrumentedOpenAI({ workflow_id: 'agent_manager_conversation', agent_id: agentId });
   const completion = await openai.chat.completions.create({
     model: MODEL,

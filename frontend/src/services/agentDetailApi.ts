@@ -226,6 +226,13 @@ export interface AgentDetail {
      * 'manual' (a human set it via the reactivation flow) vs null (neither
      * has ever touched this agent). */
     autonomy_level_source: 'auto' | 'manual' | null;
+    /** Reports-to editor (2026-09-30) — the raw hierarchy columns, alongside the
+     * already-resolved display chain in this page's own top-level `reports_to` field.
+     * Needed because the derived chain alone can't distinguish "no reports_to
+     * configured" from "reports_to_type is set but the target is dangling" — a real
+     * editor needs the raw value to prefill correctly in either case. */
+    reports_to_type: 'human' | 'agent' | null;
+    reports_to_id: string | null;
     /** Real-enforcement scoping, Phase 3 (2026-09-20) — the per-agent shadow/enforce
      * switch. `abac_mode_override` null means "follow the global default" (the real,
      * untouched state until an admin deliberately sets one). `abac_effective_mode` and
@@ -398,6 +405,33 @@ export async function setAgentAbacOverride(
   const res = await api.patch<{ result: SetAgentAbacOverrideResult }>(
     `/api/admin/workforce/agents/${agentId}/abac-override`,
     { override },
+  );
+  return res.data.result;
+}
+
+export interface SetAgentReportsToResult {
+  agentId: string;
+  agentName: string;
+  found: boolean;
+  updated: boolean;
+  reports_to: AgentDetailReportsTo | null;
+  setAt: string | null;
+  setBy: string | null;
+  error: string | null;
+}
+
+// Reports-to editor (2026-09-30) — Dhee: "I should be able to change who Reese reports to."
+// `reports_to_type`/`reports_to_id` are both required; the server dry-runs the chain through
+// the real resolver before persisting, and rejects (400, caught by the caller) a target that
+// doesn't resolve to a real human.
+export async function setAgentReportsTo(
+  agentId: string,
+  reportsToType: 'human' | 'agent',
+  reportsToId: string,
+): Promise<SetAgentReportsToResult> {
+  const res = await api.patch<{ result: SetAgentReportsToResult }>(
+    `/api/admin/workforce/agents/${agentId}/reports-to`,
+    { reports_to_type: reportsToType, reports_to_id: reportsToId },
   );
   return res.data.result;
 }

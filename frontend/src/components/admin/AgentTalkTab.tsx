@@ -46,8 +46,14 @@ interface Props {
   /** Agent Detail polish round 4 (2026-09-30) — a real, ticket-specific
    * message from the Work tab's "Discuss with Reese" button, pre-filled
    * into the composer below (never auto-sent). Kept separate from
-   * `onNavigate` deliberately — see AgentDetailPage.tsx's own comment. */
-  initialDraft?: string | null;
+   * `onNavigate` deliberately — see AgentDetailPage.tsx's own comment.
+   * Reese manager-directed growth mission, Phase 2 (2026-09-30) — widened
+   * to carry the real ticket id alongside the draft text (was `string |
+   * null`), so the send that consumes this draft can bind the conversation
+   * to that real case — the actual fix for "I cannot access the
+   * conversation details." `ticketId` is null for a non-ticket draft (e.g.
+   * the Results & Reports "Discuss this report" button). */
+  initialDraft?: { text: string; ticketId: string | null } | null;
   onDraftConsumed?: () => void;
 }
 
@@ -76,6 +82,7 @@ export default function AgentTalkTab({ agentId, detail, onNavigate, initialDraft
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [draftTicketId, setDraftTicketId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const fetchConversation = useCallback(async () => {
@@ -133,7 +140,8 @@ export default function AgentTalkTab({ agentId, detail, onNavigate, initialDraft
   // drafting about a different ticket — never repopulates/duplicates it.
   useEffect(() => {
     if (!initialDraft) return;
-    setText(initialDraft);
+    setText(initialDraft.text);
+    setDraftTicketId(initialDraft.ticketId);
     setMode('ask');
     onDraftConsumed?.();
   }, [initialDraft, onDraftConsumed]);
@@ -157,8 +165,13 @@ export default function AgentTalkTab({ agentId, detail, onNavigate, initialDraft
     setSendError(null);
     try {
       if (mode === 'ask') {
-        const updated = await sendMessage(agentId, trimmed);
+        // Reese manager-directed growth mission, Phase 2 (2026-09-30) — one-shot: the real
+        // ticket id only accompanies the message that consumed a fresh draft, never a later
+        // manually-typed message. The backend persists this onto the conversation's own
+        // focused_ticket_id and reuses it for follow-ups without it being resent every time.
+        const updated = await sendMessage(agentId, trimmed, draftTicketId ?? undefined);
         setConversation(updated);
+        setDraftTicketId(null);
       } else {
         await createDirective(agentId, trimmed);
         await fetchDirectives();
@@ -169,7 +182,7 @@ export default function AgentTalkTab({ agentId, detail, onNavigate, initialDraft
     } finally {
       setSending(false);
     }
-  }, [agentId, mode, text, activeDirectives.length, fetchDirectives]);
+  }, [agentId, mode, text, draftTicketId, activeDirectives.length, fetchDirectives]);
 
   const handleRevoke = useCallback(async (directiveId: string) => {
     setRevokingId(directiveId);

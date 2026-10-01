@@ -73,6 +73,21 @@ export const UNDERSTANDING_DIMENSIONS = [
   'constraints',
   'success_definition',
   'delivery_profile',
+  /**
+   * EXPLICIT REQUIREMENTS, in the customer's own words.
+   *
+   * Added 2026-10-01 after a measured failure. A simulated intake stated THIRTY numbered
+   * requirements; the understanding kept 13 items, the brief carried none of them, and the
+   * plan came back with 24 requirements of which 18 were invented. There was nowhere for a
+   * requirement to go: every other dimension here describes the SHAPE of a problem - who,
+   * what flows, what hurts - and a person handing over a specification was having it
+   * compressed into roughly one item per dimension.
+   *
+   * Last in the list on purpose: the first twelve drive the interview's question order
+   * (`interviewMethod`), and this is not a thing to interview for - it is a thing to
+   * record verbatim when someone states it.
+   */
+  'requirements',
 ] as const;
 
 export type UnderstandingDimension = (typeof UNDERSTANDING_DIMENSIONS)[number];
@@ -99,6 +114,7 @@ export const DIMENSION_LABELS: Record<UnderstandingDimension, string> = {
   constraints: 'Constraints',
   success_definition: 'Success definition',
   delivery_profile: 'Likely delivery profile',
+  requirements: 'Stated requirements',
 };
 
 /* ── Provenance and classification ────────────────────────────────── */

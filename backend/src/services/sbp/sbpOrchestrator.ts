@@ -211,6 +211,10 @@ export async function startBuild(input: StartBuildInput): Promise<{ projectId: s
     answers: input.answers ?? null,
     correlation_id: correlationId,
     status: 'generating',
+    // WRITTEN DOWN, because a deploy kills the queue but not the row. `recoverStrandedBuilds`
+    // rebuilds the job from here, so a hold that existed only on this in-memory input was a
+    // hold the next restart quietly dropped - and the build published itself to the student.
+    hold_for_review: input.holdForReview === true,
   });
   log('sbp_build_started', correlationId, 'success', { projectId: input.projectId, idea_chars: input.idea.length });
 
@@ -569,6 +573,9 @@ function inputFromIntake(intake: BuildIntake, enrollmentId: string): StartBuildI
     doneDefinition: intake.done_definition ?? undefined,
     targetWeeks: intake.target_weeks != null ? Number(intake.target_weeks) : undefined,
     answers: (intake.answers ?? undefined) as StartBuildInput['answers'],
+    // Restored from the row. Without this the resumed generation is identical to the
+    // original EXCEPT that it publishes, which is the one difference that matters.
+    holdForReview: intake.hold_for_review === true,
   };
 }
 

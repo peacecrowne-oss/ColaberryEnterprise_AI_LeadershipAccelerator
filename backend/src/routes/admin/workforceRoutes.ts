@@ -6,7 +6,7 @@ import {
   handleListTasks, handleCreateTask, handleUpdateTask, handleMessages, handleReview, handleAnalytics,
   handleListLiveAgents, handleListLiveAgentActivity, handleListLiveAgentTimeline, handleOrgChart,
   handleUpdateOrgMemberTeam, handleAssignHierarchyTask, handleResetAgents, handleReactivateAgent,
-  handleSetAgentAbacOverride,
+  handleSetAgentAbacOverride, handleSetAgentReportsTo,
 } from '../../controllers/workforceController';
 
 const router = Router();
@@ -66,5 +66,10 @@ router.post('/api/admin/workforce/agents/:id/reactivate', requireAdmin, handleRe
 // Real-enforcement scoping, Phase 3 (2026-09-20) — the per-agent shadow/enforce switch Ali
 // asked for. See handleSetAgentAbacOverride()'s own header comment.
 router.patch('/api/admin/workforce/agents/:id/abac-override', requireAdmin, handleSetAgentAbacOverride);
+
+// Reports-to editor (2026-09-30) — Dhee: "I should be able to change who Reese reports to."
+// No real write path existed anywhere before this. See handleSetAgentReportsTo()'s own
+// header comment and agentReportsToService.ts for the real pre-persist chain validation.
+router.patch('/api/admin/workforce/agents/:id/reports-to', requireAdmin, handleSetAgentReportsTo);
 
 export default router;

@@ -1,8 +1,10 @@
 import React from 'react';
 import type { Brand } from '../../../../services/adminBrandApi';
-import type { ContentType, Poll } from '../../../../services/contentComposerApi';
+import type { ContentType, Poll, ProviderSummary } from '../../../../services/contentComposerApi';
 import ComposerPollEditor, { EMPTY_POLL } from './ComposerPollEditor';
 import { blockerSentence, canCreate } from './setupGate';
+import { setupShape } from './setupShape';
+import { checkVideoLink, excludedByContentType, linkPostNotice } from './videoSource';
 
 /**
  * Steps 1, 3 and 4: the choices that fix WHAT is being said and FOR WHOM.
@@ -47,19 +49,36 @@ export interface ComposerSetupProps {
   onDraftMessage?: (topic: string) => void;
   /** Holes and unsupported specifics in the last draft, surfaced beside the message box. */
   draftNotes?: { placeholders: string[]; unverifiedClaims: string[] } | null;
+  /** Connected networks, so a link post can name which of them it would exclude. */
+  providers?: readonly ProviderSummary[];
+  /**
+   * The upload control, rendered INSIDE the content-type column.
+   *
+   * It is a slot rather than a prop bundle because the upload needs the item id, the upload
+   * progress and the attach/detach handlers - all of which live on the page. Passing the node
+   * keeps that ownership where it is and still puts the control where the eye expects it:
+   * directly under "video", not at the bottom of the form.
+   */
+  mediaSlot?: React.ReactNode;
 }
 
 const CONTENT_TYPES: ContentType[] = ['text', 'image', 'video', 'carousel', 'thread', 'link', 'poll', 'document'];
-/** Types the validator refuses without at least one media item; attach one under Channels. */
-const MEDIA_TYPES: ReadonlySet<ContentType> = new Set<ContentType>(['image', 'video', 'carousel', 'document']);
 
 export default function ComposerSetup({
   values, brands, campaigns, locked, busy, onChange, onSubmit, onAssignSlug, onDraftMessage, draftNotes,
+  providers = [], mediaSlot = null,
 }: ComposerSetupProps) {
   const [topic, setTopic] = React.useState('');
+  /** 'upload' or 'link', for a video. Local: choosing it is not yet a change to the post. */
+  const [videoSource, setVideoSource] = React.useState<'upload' | 'link'>('upload');
+  const [videoLink, setVideoLink] = React.useState('');
+  const [videoLinkError, setVideoLinkError] = React.useState<string | null>(null);
+
   const set = <K extends keyof SetupValues>(k: K, v: SetupValues[K]) => onChange({ ...values, [k]: v });
   const visibleCampaigns = campaigns.filter((c) => !values.brand_id || !c.brand_id || c.brand_id === values.brand_id);
   const chosen = campaigns.find((c) => c.id === values.campaign_id);
+  // What THIS content type needs. Drives the labels and which fields render at all.
+  const shape = setupShape(values.content_type);
   const canSubmit = canCreate(values, busy);
   const blocker = blockerSentence(values);
 
@@ -94,20 +113,66 @@ export default function ComposerSetup({
           <label className="form-label small mb-1" htmlFor="composer-type">Content type</label>
           <select id="composer-type" className="form-select form-select-sm" value={values.content_type} disabled={busy} onChange={(e) => set('content_type', e.target.value as ContentType)}>
             {CONTENT_TYPES.map((t) => (
-              <option key={t} value={t}>{t === 'document' ? 'document (a PDF carousel, LinkedIn only - attach it under Channels)' : MEDIA_TYPES.has(t) ? `${t} (attach a file under Channels)` : t}</option>
+              <option key={t} value={t}>{t}</option>
             ))}
           </select>
-          {MEDIA_TYPES.has(values.content_type) && (
-            // The content type is a DECLARATION the validator holds each network to, not a
-            // generator. Declaring an image post with no way to attach an image fails at
-            // validation with "needs at least one media item" - a trap Ali walked into on the
-            // first run. Said here, at the moment of choosing, not two steps later.
-            <div className="form-text text-warning" data-testid="media-type-warning">
-              This declares what you will attach; it does not create one. Once the draft exists,
-              attach the file under <strong>Channels &rsaquo; Media</strong>, or validation will
-              block this post.
+          {/* The option labels used to carry "(attach a file under Channels)" and the warning
+              below pointed there too. Both are gone because the upload now sits in this section,
+              under this field - which is what Ali asked for: "the video should be uploaded at the
+              time you select that you want a video." */}
+          {shape.mediaHint && (
+            <div className="form-text" data-testid="media-type-hint">{shape.mediaHint}</div>
+          )}
+
+          {values.content_type === 'video' && (
+            // A video can be a file OR a link. The link is not a video file, so saying what it
+            // BECOMES - and what that costs - has to happen before the choice applies.
+            <div className="mt-2" data-testid="video-source">
+              <div className="btn-group btn-group-sm w-100" role="group" aria-label="Video source">
+                <button type="button" className={`btn btn-outline-secondary ${videoSource === 'upload' ? 'active' : ''}`}
+                  aria-pressed={videoSource === 'upload'} disabled={busy}
+                  onClick={() => { setVideoSource('upload'); setVideoLinkError(null); }}>Upload a file</button>
+                <button type="button" className={`btn btn-outline-secondary ${videoSource === 'link' ? 'active' : ''}`}
+                  aria-pressed={videoSource === 'link'} disabled={busy}
+                  onClick={() => setVideoSource('link')} data-testid="video-source-link">Link to a video</button>
+              </div>
+              {videoSource === 'link' && (
+                <div className="mt-2">
+                  <div className="form-text text-warning-emphasis mb-1" data-testid="link-post-notice">
+                    {linkPostNotice(excludedByContentType(providers, 'link'))}
+                  </div>
+                  <div className="d-flex gap-1">
+                    <input
+                      className="form-control form-control-sm"
+                      placeholder="https://vimeo.com/... or https://youtube.com/watch?v=..."
+                      value={videoLink}
+                      disabled={busy}
+                      onChange={(e) => { setVideoLink(e.target.value); setVideoLinkError(null); }}
+                      data-testid="video-link-input"
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-primary text-nowrap"
+                      disabled={busy}
+                      data-testid="video-link-apply"
+                      onClick={() => {
+                        const check = checkVideoLink(videoLink);
+                        // A refused link changes NOTHING - the content type stays `video`, so a
+                        // typo cannot silently turn the post into something else.
+                        if (!check.ok) { setVideoLinkError(check.reason); return; }
+                        setVideoLinkError(null);
+                        onChange({ ...values, content_type: 'link', destination_url: videoLink.trim() });
+                      }}
+                    >
+                      Use this link
+                    </button>
+                  </div>
+                  {videoLinkError && <div className="form-text text-danger" data-testid="video-link-error">{videoLinkError}</div>}
+                </div>
+              )}
             </div>
           )}
+          {mediaSlot}
         </div>
         <div className="col-md-6">
           <label className="form-label small mb-1" htmlFor="composer-title">
@@ -119,14 +184,16 @@ export default function ComposerSetup({
           <input id="composer-title" className="form-control form-control-sm" value={values.title} disabled={busy} maxLength={200} required aria-required="true" onChange={(e) => set('title', e.target.value)} />
           <div className="form-text small">Names the post in the queue and the calendar. Not published.</div>
         </div>
+        {shape.showLandingPage && (
         <div className="col-md-6">
           <label className="form-label small mb-1" htmlFor="composer-destination">Landing page (destination for tracked links)</label>
           <input id="composer-destination" className="form-control form-control-sm" type="url" placeholder="https://" value={values.destination_url} disabled={busy} onChange={(e) => set('destination_url', e.target.value)} />
         </div>
+        )}
         <div className="col-12">
           <div className="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-1">
-            <label className="form-label small mb-0" htmlFor="composer-body">Canonical message</label>
-            {onDraftMessage && (
+            <label className="form-label small mb-0" htmlFor="composer-body" data-testid="message-label">{shape.messageLabel}</label>
+            {onDraftMessage && shape.offerDraft && (
               // Starting from a topic instead of an empty box. The draft lands in the SAME
               // field and goes through the same validation and approval as anything typed,
               // so this is a faster start, not a shortcut past anything.

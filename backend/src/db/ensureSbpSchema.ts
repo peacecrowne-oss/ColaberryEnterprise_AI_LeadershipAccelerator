@@ -114,6 +114,13 @@ export async function ensureSbpSchema(): Promise<void> {
     // whose wizard failed on 11 Sep was found on the 16th with nothing to
     // explain the five days she spent on the starter template.
     `ALTER TABLE build_intake ADD COLUMN IF NOT EXISTS last_error JSONB`,
+    // The review hold has to OUTLIVE THE PROCESS. It arrived as a field on the in-memory
+    // StartBuildInput, so a deploy mid-generation left `recoverStrandedBuilds` rebuilding
+    // the job from this row with no hold in it - and the resumed build published itself to
+    // the student. Measured on production 2026-10-01: container restarted 03:06:47, build
+    // resumed 03:06:54, `sbp_autopublished` at 03:07:37 on a build started with
+    // holdForReview: true. A safety property that evaporates on restart is not one.
+    `ALTER TABLE build_intake ADD COLUMN IF NOT EXISTS hold_for_review BOOLEAN NOT NULL DEFAULT FALSE`,
     `CREATE UNIQUE INDEX IF NOT EXISTS build_intake_unique_project ON build_intake (project_id)`,
     `CREATE INDEX IF NOT EXISTS idx_build_intake_enrollment ON build_intake (enrollment_id)`,
     `CREATE INDEX IF NOT EXISTS idx_build_intake_status ON build_intake (status)`,

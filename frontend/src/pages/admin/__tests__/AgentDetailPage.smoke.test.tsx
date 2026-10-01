@@ -49,7 +49,7 @@ describe('AgentDetailPage (Reese Phase 1 transparency page)', () => {
 // Needs the real post-fetch render (unlike the static-markup test above), so this
 // uses the react-dom/client + act pattern established in
 // WorkforceOSPage.smoke.test.tsx, mocking getAgentDetail directly.
-jest.mock('../../../services/agentDetailApi', () => ({ getAgentDetail: jest.fn() }));
+jest.mock('../../../services/agentDetailApi', () => ({ getAgentDetail: jest.fn(), setAgentAbacOverride: jest.fn(), setAgentReportsTo: jest.fn() }));
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { getAgentDetail } = require('../../../services/agentDetailApi') as { getAgentDetail: jest.Mock };
 // AI Workforce Reset (2026-08-24) — the "Deactivate" button's real API call.
@@ -59,6 +59,7 @@ const { getAgentDetail } = require('../../../services/agentDetailApi') as { getA
 jest.mock('../../../services/workforceOrgChartApi', () => ({
   resetAgents: jest.fn(),
   reactivateAgent: jest.fn(),
+  getOrgChart: jest.fn(),
   AUTONOMY_LEVELS: ['observe', 'suggest', 'act_audited', 'communicate'],
   AUTONOMY_LEVEL_DESCRIPTIONS: {
     observe: 'Read only — the safest starting point for any agent coming back online.',
@@ -150,6 +151,7 @@ const DETAIL: AgentDetail = {
     max_runs_per_hour: 60, max_writes_per_execution: 100, max_proposals_per_run: 50,
     autonomy_level_set_at: null,
     autonomy_level_source: null,
+    reports_to_type: null, reports_to_id: null,
     abac_mode_override: null,
     abac_mode_override_set_at: null,
     abac_mode_override_set_by: null,

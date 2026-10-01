@@ -14,8 +14,8 @@ let container: HTMLDivElement;
 let root: Root;
 
 const ATTACHED: ItemMedia[] = [
-  { mediaAssetId: 'a1a1a1a1-0000-4000-8000-000000000001', mimeType: 'image/png', byteSize: 2_400_000, width: 1200, height: 628, altText: 'Two people at a whiteboard', position: 0, originalFilename: 'class.png', durationMs: null, pages: null },
-  { mediaAssetId: 'a1a1a1a1-0000-4000-8000-000000000002', mimeType: 'video/mp4', byteSize: 41_000_000, width: 1080, height: 1920, altText: 'A short clip', position: 1, originalFilename: null, durationMs: 45_000, pages: null },
+  { mediaAssetId: 'a1a1a1a1-0000-4000-8000-000000000001', mimeType: 'image/png', byteSize: 2_400_000, width: 1200, height: 628, altText: 'Two people at a whiteboard', position: 0, originalFilename: 'class.png', durationMs: null, pages: null, url: 'https://www.refactored.ai/m/b/aaa.png?e=1&s=x' },
+  { mediaAssetId: 'a1a1a1a1-0000-4000-8000-000000000002', mimeType: 'video/mp4', byteSize: 41_000_000, width: 1080, height: 1920, altText: 'A short clip', position: 1, originalFilename: null, durationMs: 45_000, pages: null, url: 'https://www.refactored.ai/m/b/bbb.mp4?e=1&s=x' },
 ];
 
 function render(props: Partial<React.ComponentProps<typeof ComposerMedia>> = {}) {
@@ -71,11 +71,25 @@ describe('ComposerMedia attach rule', () => {
     expect(attachButton().disabled).toBe(true);
   });
 
-  it('is fully disabled before the draft exists, and says why', () => {
+  it('WORKS before the draft exists, because attaching creates one', () => {
+    // This asserted the opposite until 2026-10-01: everything disabled until a draft existed,
+    // which read as a broken control - "None of these buttons work to upload the video."
+    // They were disabled, correctly and uselessly. The draft is a prerequisite of the API, not
+    // of the operator's intent, so the page satisfies it on attach instead of demanding it.
     render({ enabled: false });
-    expect(fileInput().disabled).toBe(true);
-    expect(altInput().disabled).toBe(true);
-    expect(container.textContent).toMatch(/Create the draft first/);
+    expect(fileInput().disabled).toBe(false);
+    expect(altInput().disabled).toBe(false);
+    expect(container.textContent).not.toMatch(/Create the draft first/);
+  });
+
+  it('and says what attaching will do, so the draft is not created by surprise', () => {
+    render({ enabled: false });
+    expect(container.textContent).toMatch(/Attaching creates the draft, naming it after the file/);
+  });
+
+  it('says nothing of the sort once the draft exists', () => {
+    render({ enabled: true });
+    expect(container.textContent).not.toMatch(/Attaching creates the draft/);
   });
 
   it('names the limits and accepted types up front', () => {
@@ -88,7 +102,7 @@ describe('ComposerMedia attach rule', () => {
 
 describe('ComposerMedia documents', () => {
   it('accepts PDF, asks for a TITLE rather than a description when a PDF is picked, and lists page counts', () => {
-    render({ media: [{ mediaAssetId: 'a1a1a1a1-0000-4000-8000-000000000003', mimeType: 'application/pdf', byteSize: 4_000_000, width: null, height: null, altText: 'Five AI habits', position: 0, originalFilename: 'deck.pdf', durationMs: null, pages: 12 }] });
+    render({ media: [{ mediaAssetId: 'a1a1a1a1-0000-4000-8000-000000000003', mimeType: 'application/pdf', byteSize: 4_000_000, width: null, height: null, altText: 'Five AI habits', position: 0, originalFilename: 'deck.pdf', durationMs: null, pages: 12, url: null }] });
     expect(fileInput().accept).toContain('application/pdf');
     expect(container.querySelector('[data-testid="media-pages"]')!.textContent).toBe('12 pages');
     expect(container.textContent).toMatch(/PDF up to 100 MB/);

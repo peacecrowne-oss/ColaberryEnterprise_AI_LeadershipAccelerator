@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { Poll, ContentVariant, ItemLink, ProviderKey, ProviderSummary } from '../../../../services/contentComposerApi';
+import type { ItemMedia, Poll, ContentVariant, ItemLink, ProviderKey, ProviderSummary } from '../../../../services/contentComposerApi';
 
 /**
  * Step 8: how the post will look on each network, at desktop and phone width.
@@ -16,12 +16,94 @@ export interface ComposerPreviewProps {
   providers: ProviderSummary[];
   links: ItemLink[];
   mediaCount: number;
+  /** The attachments themselves, so the preview shows the file and not a grey box. */
+  media?: readonly ItemMedia[];
   brandName: string;
   /** Drawn under the text as an un-voted poll when present. */
   poll?: Poll | null;
 }
 
 type Device = 'desktop' | 'mobile';
+
+/**
+ * The attachments, as the file rather than as a grey rectangle.
+ *
+ * This drew `mediaCount` empty boxes until 2026-10-01, which meant the preview could not answer
+ * the one question a preview of a video post exists to answer: is that the right video? Reported
+ * in production as "the preview does not show my video" - and it never had, by construction,
+ * because nothing passed it the media.
+ *
+ * `url` is a short-lived signed link to the same `/m/` route the publisher fetches from. When it
+ * is absent - no public base URL on this server - the placeholder returns, captioned, rather
+ * than a broken image icon.
+ */
+function PreviewMedia({ media, count }: { media: readonly ItemMedia[]; count: number }) {
+  const shown = media.slice(0, 4);
+  // No media rows but a non-zero count means the confirmation knows about assets this component
+  // was not given; show the old placeholder rather than claiming there is nothing attached.
+  if (shown.length === 0) {
+    if (count === 0) return null;
+    return (
+      <div className="mt-2 d-flex gap-1" data-testid="preview-media-placeholder">
+        {Array.from({ length: Math.min(count, 4) }).map((_, i) => (
+          <div key={i} className="bg-light border rounded" style={{ width: count === 1 ? '100%' : 96, height: 96 }} aria-label={`media ${i + 1}`} />
+        ))}
+        {count > 4 && <div className="small text-muted align-self-center">+{count - 4}</div>}
+      </div>
+    );
+  }
+
+  const single = shown.length === 1;
+  return (
+    <div className="mt-2 d-flex flex-wrap gap-1" data-testid="preview-media">
+      {shown.map((m) => {
+        const box: React.CSSProperties = single
+          ? { width: '100%', maxHeight: 360, objectFit: 'contain' }
+          : { width: 96, height: 96, objectFit: 'cover' };
+        if (m.url && m.mimeType.startsWith('video/')) {
+          return (
+            <video
+              key={m.mediaAssetId}
+              src={m.url}
+              controls
+              preload="metadata"
+              className="border rounded bg-dark"
+              style={box}
+              data-testid={`preview-video-${m.mediaAssetId}`}
+            />
+          );
+        }
+        if (m.url && m.mimeType.startsWith('image/')) {
+          return (
+            <img
+              key={m.mediaAssetId}
+              src={m.url}
+              // The alt text is the operator's own, and it is required at upload - so the preview
+              // is also where they see whether it reads well.
+              alt={m.altText ?? ''}
+              className="border rounded"
+              style={box}
+              data-testid={`preview-image-${m.mediaAssetId}`}
+            />
+          );
+        }
+        // PDFs and anything unrenderable: a tile that states what it is, not an empty box.
+        return (
+          <div
+            key={m.mediaAssetId}
+            className="border rounded bg-light d-flex flex-column justify-content-center align-items-center text-muted p-2"
+            style={single ? { width: '100%', minHeight: 96 } : { width: 96, height: 96 }}
+            data-testid={`preview-file-${m.mediaAssetId}`}
+          >
+            <span className="small fw-semibold text-uppercase">{m.mimeType.split('/')[1] ?? 'file'}</span>
+            {m.pages !== null && <span style={{ fontSize: '0.7rem' }}>{m.pages} page{m.pages === 1 ? '' : 's'}</span>}
+          </div>
+        );
+      })}
+      {media.length > 4 && <div className="small text-muted align-self-center">+{media.length - 4}</div>}
+    </div>
+  );
+}
 
 /** Rough fold heuristics per network: how many characters show before "…more". */
 const FOLD_CHARS: Partial<Record<ProviderKey, number>> = {
@@ -31,7 +113,7 @@ const FOLD_CHARS: Partial<Record<ProviderKey, number>> = {
   meta_instagram: 125,
 };
 
-export default function ComposerPreview({ variants, providers, links, mediaCount, brandName, poll = null }: ComposerPreviewProps) {
+export default function ComposerPreview({ variants, providers, links, mediaCount, media = [], brandName, poll = null }: ComposerPreviewProps) {
   const [device, setDevice] = useState<Device>('desktop');
   const [active, setActive] = useState<ProviderKey | null>(variants[0]?.provider ?? null);
 
@@ -90,14 +172,7 @@ export default function ComposerPreview({ variants, providers, links, mediaCount
           </div>
         )}
 
-        {mediaCount > 0 && (
-          <div className="mt-2 d-flex gap-1">
-            {Array.from({ length: Math.min(mediaCount, 4) }).map((_, i) => (
-              <div key={i} className="bg-light border rounded" style={{ width: mediaCount === 1 ? '100%' : 96, height: 96 }} aria-label={`media ${i + 1}`} />
-            ))}
-            {mediaCount > 4 && <div className="small text-muted align-self-center">+{mediaCount - 4}</div>}
-          </div>
-        )}
+        <PreviewMedia media={media} count={mediaCount} />
 
         {link && caps?.linkBehavior !== 'no_clickable_links' && (
           <div className="mt-2 border rounded p-2 bg-light small" data-testid="preview-link-card">

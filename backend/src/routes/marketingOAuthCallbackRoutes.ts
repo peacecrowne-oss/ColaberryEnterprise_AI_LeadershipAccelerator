@@ -110,11 +110,27 @@ export function makeOAuthCallbackRouter(overrides: Partial<OAuthCallbackDeps> = 
       const accounts = await connector.discoverAccounts({ cfg, token, http: deps.http, now });
       if (accounts.length === 0) return fail('NoAccountsFound');
 
+      /**
+       * How many destinations did this sign-in find on each network?
+       *
+       * The rule is one per network per brand. A Meta login can hand back four Facebook Pages,
+       * and a LinkedIn admin of three company Pages gets all three - but before this, each one
+       * was connected in turn and each revoked the one before it, destroying its credentials,
+       * while the redirect still reported the full count. The last one discovered won, silently.
+       *
+       * Counted per PROVIDER, not per batch: a Meta sign-in returning one Page and one Instagram
+       * account is two unambiguous connections, not an ambiguous pair.
+       */
+      const perProvider = new Map<string, number>();
+      for (const a of accounts) perProvider.set(a.provider, (perProvider.get(a.provider) ?? 0) + 1);
+
       const connected: string[] = [];
+      const awaiting: string[] = [];
       for (const a of accounts) {
         const view = await deps.connect({
           tenantId,
           brandId: payload.brandId,
+          awaitingSelection: (perProvider.get(a.provider) ?? 0) > 1,
           provider: a.provider,
           providerAccountId: a.providerAccountId,
           displayName: a.displayName,
@@ -129,10 +145,25 @@ export function makeOAuthCallbackRouter(overrides: Partial<OAuthCallbackDeps> = 
           connectedBy: payload.adminId,
           metadata: a.metadata,
         });
-        connected.push(view.id);
+        if (view.status === 'needs_selection') awaiting.push(view.id);
+        else connected.push(view.id);
       }
-      log('info', 'oauth_accounts_connected', { connector: connector.key, brand_id: payload.brandId, connected_by: payload.adminId, account_ids: connected });
-      return back({ connected: connector.key, brand: payload.brandId, count: String(connected.length) });
+      log('info', 'oauth_accounts_connected', {
+        connector: connector.key,
+        brand_id: payload.brandId,
+        connected_by: payload.adminId,
+        account_ids: connected,
+        awaiting_selection_ids: awaiting,
+      });
+      // `count` is what actually connected. `choose` is what the operator still has to decide -
+      // reporting the two as one number is how "3 accounts added" came to mean one account added
+      // and two revoked.
+      return back({
+        connected: connector.key,
+        brand: payload.brandId,
+        count: String(connected.length),
+        ...(awaiting.length ? { choose: String(awaiting.length) } : {}),
+      });
     } catch (err) {
       const e = err as { errorClass?: string; name?: string; message?: string };
       log('error', 'oauth_connect_failed', { connector: connector.key, brand_id: payload.brandId, message: String(e?.message ?? err).slice(0, 200) }, e?.errorClass ?? e?.name ?? 'Error');

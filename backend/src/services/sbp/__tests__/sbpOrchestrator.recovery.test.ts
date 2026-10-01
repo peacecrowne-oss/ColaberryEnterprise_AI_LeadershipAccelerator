@@ -95,6 +95,39 @@ describe('recoverStrandedBuilds', () => {
     expect(brief).toContain('Marta, on Saturdays.');
   });
 
+  // The resumed build's publish behaviour is held in sbpOrchestrator.autoPublish.test.ts,
+  // which has the harness that can tell a publish from a draft.
+  it('writes the hold DOWN when a build starts, not only into the running job', async () => {
+    // The row is the only thing that outlives the process, so this is the write that makes
+    // the test above possible at all.
+    mockGetIntake.mockResolvedValue(null);
+    mockDecompose.mockRejectedValue(new Error('stop here'));
+
+    await startBuild({
+      projectId: 'proj-held', enrollmentId: 'enr-1',
+      idea: 'A tool loan system for a repair cafe, replacing the paper sign-out sheet.',
+      holdForReview: true,
+    });
+
+    const saved = mockSaveIntake.mock.calls.map((c) => c[0]).find((i) => i.project_id === 'proj-held');
+    expect(saved).toBeDefined();
+    expect(saved.hold_for_review).toBe(true);
+  });
+
+  it('does not claim a hold that was never asked for', async () => {
+    // The honesty runs both ways: a student's own build must not start resting at drafted.
+    mockGetIntake.mockResolvedValue(null);
+    mockDecompose.mockRejectedValue(new Error('stop here'));
+
+    await startBuild({
+      projectId: 'proj-open', enrollmentId: 'enr-1',
+      idea: 'A tool loan system for a repair cafe, replacing the paper sign-out sheet.',
+    });
+
+    const saved = mockSaveIntake.mock.calls.map((c) => c[0]).find((i) => i.project_id === 'proj-open');
+    expect(saved.hold_for_review).toBe(false);
+  });
+
   it('does not redo what the first start already did - truth and naming', async () => {
     mockListByStatus.mockResolvedValue([stranded()]);
     await recoverStrandedBuilds();

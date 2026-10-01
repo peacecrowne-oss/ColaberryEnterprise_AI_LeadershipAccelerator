@@ -174,3 +174,65 @@ describe('toBuildIntake — the detail reaches the decomposer', () => {
     expect(ids).not.toContain('constraints_2');
   });
 });
+
+/**
+ * THIRTY STATED REQUIREMENTS MUST REACH THE DECOMPOSER.
+ *
+ * Measured on production 2026-10-01: a conversation stating thirty numbered requirements
+ * produced an understanding of 13 items, a brief carrying none of them by name, and a plan
+ * of 24 requirements of which 18 were invented. Two causes, both now fixed upstream — there
+ * was no `requirements` dimension for them to live in, and the extraction ceiling made
+ * recording them impossible anyway.
+ *
+ * This holds the half that is pure code: GIVEN the understanding did capture them, the
+ * brief carries every one. Without it, fixing the extractor would just move the loss.
+ */
+describe('a specification, once it has been captured', () => {
+  const thirty = Array.from({ length: 30 }, (_, i) => ({
+    dimension: 'requirements',
+    // Real stated requirements run a sentence or two each. Thirty of them is well past
+    // what one answer holds, which is the case this whole area exists for.
+    value: `REQ-${String(i + 1).padStart(2, '0')} The system must support the ${i + 1}th capability the customer described, `
+      + 'including who is allowed to do it, what has to be recorded when they do, and what the system '
+      + 'must refuse. Stated at the length a person actually states a requirement.',
+    classification: 'FACT',
+    provenance: 'source_message',
+  })) as unknown as UnderstandingItem[];
+
+  const u: ProjectUnderstanding = {
+    title: 'Regional Medical Courier',
+    proposed_surfaces: [],
+    items: [
+      { dimension: 'problem', value: 'Everything is coordinated on a whiteboard.', classification: 'FACT', provenance: 'source_message' } as UnderstandingItem,
+      ...thirty,
+    ],
+  };
+
+  it('carries ALL THIRTY into the brief, by name', () => {
+    const intake = toBuildIntake(u);
+    const everything = intake.answers.map((a) => a.answer).join('\n');
+
+    for (let n = 1; n <= 30; n += 1) {
+      expect(everything).toContain(`REQ-${String(n).padStart(2, '0')}`);
+    }
+  });
+
+  it('splits them across numbered answers rather than truncating the list', () => {
+    const ids = toBuildIntake(u).answers.map((a) => a.id);
+    expect(ids).toContain('requirements');
+    expect(ids.filter((id) => id.startsWith('requirements')).length).toBeGreaterThan(1);
+  });
+
+  it('reports nothing dropped', () => {
+    expect(toBuildIntake(u).dropped).toEqual([]);
+  });
+
+  it('treats stated requirements as ANSWERS, not as the idea paragraph', () => {
+    // The idea is the problem in their words; requirements are what the decomposer must
+    // build against. Folding them into the idea would clip them at IDEA_MAX and lose the
+    // question-and-answer shape the decomposer reads.
+    const intake = toBuildIntake(u);
+    expect(intake.idea).not.toContain('REQ-01');
+    expect(intake.answers.some((a) => a.id.startsWith('requirements'))).toBe(true);
+  });
+});

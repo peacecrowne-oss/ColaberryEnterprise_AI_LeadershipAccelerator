@@ -13,9 +13,9 @@
  */
 
 /** How an account reads on the Overview. Ordered worst-first; `worstHealth` relies on it. */
-export type AccountHealth = 'revoked' | 'expired' | 'unhealthy' | 'expiring' | 'ok';
+export type AccountHealth = 'revoked' | 'expired' | 'unhealthy' | 'unselected' | 'expiring' | 'ok';
 
-const SEVERITY: AccountHealth[] = ['revoked', 'expired', 'unhealthy', 'expiring', 'ok'];
+const SEVERITY: AccountHealth[] = ['revoked', 'expired', 'unhealthy', 'unselected', 'expiring', 'ok'];
 
 /**
  * How long before expiry the Overview starts warning.
@@ -111,6 +111,10 @@ export function accountHealth(
   judgeByConnection = false,
 ): AccountHealth {
   if (account.status === 'revoked' || asDate(account.revoked_at)) return 'revoked';
+
+  // Discovered but not chosen. The token may be perfectly good; what is missing is a decision,
+  // so this is reported ahead of expiry - "pick one" is the action, not "reconnect".
+  if (account.status === 'needs_selection') return 'unselected';
 
   const expiry = judgeByConnection ? connectionExpiry(account) : accessTokenExpiry(account);
   const days = daysUntil(expiry, now);

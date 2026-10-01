@@ -14,9 +14,10 @@ import ComposerPublishing from './ComposerPublishing';
 import { fromCentralInput, toCentralInput } from '../centralTime';
 import { listChannelAccounts } from '../../../../services/channelAccountApi';
 import {
-  channelChoices, connectedProviders, pruneSelection, unavailableNote,
+  channelChoices, connectedProviders, orphanVariantNote, pruneSelection, unavailableNote,
   type ConnectedAccountLike,
 } from './channelChoices';
+import { mediaGateNote, setupShape } from './setupShape';
 
 /**
  * The marketing composer (spec 8.1). One page, five sections, in the order the work happens:
@@ -115,6 +116,14 @@ export default function AdminContentComposerPage() {
   const brand = useMemo(() => brands.find((b) => b.id === setup.brand_id) ?? null, [brands, setup.brand_id]);
 
   /**
+   * What the chosen content type needs. The upload lives in Setup for types that take a file,
+   * because that is the moment the operator decided they wanted one - reported 2026-10-01:
+   * "the video should be uploaded at the time you select that you want a video."
+   */
+  const shape = useMemo(() => setupShape(setup.content_type), [setup.content_type]);
+
+
+  /**
    * Which networks THIS brand can post to. The channel row used to list every network the
    * platform knows about, so a brand with Facebook and Instagram could be given seven variants,
    * four of them with nowhere to go.
@@ -134,16 +143,31 @@ export default function AdminContentComposerPage() {
     () => channelChoices(providers, connectedProviders(brandAccounts), Boolean(setup.brand_id)),
     [providers, brandAccounts, setup.brand_id],
   );
-  const channelNote = useMemo(() => unavailableNote(choices, Boolean(setup.brand_id)), [choices, setup.brand_id]);
+  const orphanNote = useMemo(
+    () => orphanVariantNote(variants.map((v) => v.provider), choices),
+    [variants, choices],
+  );
+  const channelNote = useMemo(
+    () => unavailableNote(choices, Boolean(setup.brand_id), Boolean(item)),
+    [choices, setup.brand_id, item],
+  );
 
-  // The brand can change under a selection, and an account can be disconnected after an item was
-  // saved. Either way a tick that is no longer valid must not survive into generation.
+  /**
+   * A tick that is no longer valid must not survive into generation.
+   *
+   * `selected` IS a dependency, not just `choices`. `reload()` replaces the whole selection with
+   * every provider that already has a variant - so after generating, an item carrying variants
+   * from before this rule existed put all seven back, checked, including the disabled ones.
+   * Watching only `choices` pruned once and then never again, because the brand had not changed.
+   * The identity guard below returns the same array when nothing is dropped, so React bails out
+   * and this cannot loop.
+   */
   useEffect(() => {
     setSelected((s) => {
       const next = pruneSelection(s, choices);
       return next.length === s.length ? s : next;
     });
-  }, [choices]);
+  }, [choices, selected]);
 
   // ── First draft from a topic ────────────────────────────────────────────────────────────
   const [draftNotes, setDraftNotes] = useState<{ placeholders: string[]; unverifiedClaims: string[] } | null>(null);
@@ -239,17 +263,46 @@ export default function AdminContentComposerPage() {
 
   // Media. Reload after each change because the attachment count feeds validation (an
   // `image` post with nothing attached is a blocker) and the confirmation's asset list.
-  const attachMedia = (file: File, altText: string) => withItem(async (id) => {
+  /**
+   * Attach a file, creating the draft first if there is not one yet.
+   *
+   * The upload used to be dead until a draft existed, which read as broken: pick `video`, see a
+   * file picker, and nothing happens. Reported 2026-10-01: "None of these buttons work to upload
+   * the video." They were disabled, correctly and uselessly.
+   *
+   * The draft is a prerequisite of the API, not of the operator's intent, so the page satisfies
+   * it rather than demanding it. An empty internal title - the only other required field -
+   * defaults to the file's own name, which is a better guess than an empty box and is editable.
+   */
+  const attachMedia = async (file: File, altText: string) => {
+    if (!setup.brand_id) { say('danger', 'Choose a brand before attaching a file.'); return; }
+    setBusy(true);
     setUpload({ name: file.name, sent: 0, total: file.size });
     try {
+      let id = item?.id ?? null;
+      if (!id) {
+        const title = setup.title.trim() || file.name.replace(/\.[^.]+$/, '');
+        const created = await composer.createDraft({
+          brand_id: setup.brand_id, campaign_id: setup.campaign_id || null, title,
+          canonical_body: setup.canonical_body, content_type: setup.content_type,
+          is_paid: setup.is_paid, has_offer: setup.has_offer,
+          ...(setup.content_type === 'poll' && setup.poll ? { poll: trimPoll(setup.poll) } : {}),
+        });
+        id = created.id;
+        setSetup((prev) => ({ ...prev, title }));
+        navigate(`/admin/marketing/composer/${created.id}`, { replace: true });
+      }
       const next = await composer.attachMedia(id, file, altText, (sent, total) => setUpload({ name: file.name, sent, total }));
       setMedia(next);
       await reload(id);
       say('success', `Attached. ${next.length} media item${next.length === 1 ? '' : 's'} on this post.`);
+    } catch (err) {
+      fail(err, 'The file could not be attached.');
     } finally {
       setUpload(null);
+      setBusy(false);
     }
-  }, 'The file could not be attached.')();
+  };
 
   const detachMedia = (mediaAssetId: string) => withItem(async (id) => {
     setMedia(await composer.detachMedia(id, mediaAssetId));
@@ -318,12 +371,25 @@ export default function AdminContentComposerPage() {
       )}
 
       <SectionCard title="1. Setup" subtitle="Brand, campaign, landing page and the canonical message." icon="settings-3-line">
-        <ComposerSetup values={setup} brands={brands} campaigns={campaigns} locked={Boolean(item)} busy={busy} onChange={setSetup} onSubmit={saveSetup} onAssignSlug={assignSlug} onDraftMessage={draftMessage} draftNotes={draftNotes} />
+        <ComposerSetup
+          values={setup} brands={brands} campaigns={campaigns} locked={Boolean(item)} busy={busy}
+          onChange={setSetup} onSubmit={saveSetup} onAssignSlug={assignSlug}
+          onDraftMessage={draftMessage} draftNotes={draftNotes} providers={providers}
+          mediaSlot={shape.mediaRole !== 'none' ? (
+            // Inside the content-type column, directly under the type that asked for it.
+            // It sat after the whole form until 2026-10-01: "why isn't the video upload closer
+            // to where the video is. It seems weird towards the bottom."
+            <div className="mt-2" data-testid="setup-media">
+              <ComposerMedia media={media} busy={busy} enabled={Boolean(item)} upload={upload} onAttach={attachMedia} onDetach={detachMedia} />
+            </div>
+          ) : null}
+        />
       </SectionCard>
 
       <SectionCard title="2. Channels and variants" subtitle="Pick networks, generate, edit, add tracked links, validate." icon="share-line">
         {/* Greyed boxes explained once, above the row, rather than only in seven tooltips. */}
         {channelNote && <div className="small text-warning-emphasis mb-2" data-testid="channel-note">{channelNote}</div>}
+        {orphanNote && <div className="small text-warning-emphasis mb-2" data-testid="orphan-variant-note">{orphanNote}</div>}
         <div className="d-flex flex-wrap gap-3 mb-3">
           {choices.map((c) => (
             <label key={c.provider} className={`form-check small ${c.selectable ? '' : 'text-muted'}`} title={c.reason ?? undefined}>
@@ -338,7 +404,6 @@ export default function AdminContentComposerPage() {
             </label>
           ))}
         </div>
-        <ComposerMedia media={media} busy={busy} enabled={Boolean(item)} upload={upload} onAttach={attachMedia} onDetach={detachMedia} />
         <div className="d-flex flex-wrap gap-2 mb-3">
           <button type="button" className="btn btn-sm btn-primary" disabled={!item || busy || selected.length === 0} onClick={generate}>Generate variants</button>
           <button type="button" className="btn btn-sm btn-outline-primary" disabled={!item || busy || variants.length === 0 || !setup.destination_url} onClick={makeLinks}>Generate tracked links</button>
@@ -348,7 +413,7 @@ export default function AdminContentComposerPage() {
       </SectionCard>
 
       <SectionCard title="3. Preview" subtitle="Desktop and mobile, per network." icon="eye-line">
-        <ComposerPreview variants={variants} providers={providers} links={links} mediaCount={confirmation?.assets.length ?? 0} brandName={brand?.name ?? 'Brand'} poll={setup.content_type === 'poll' ? setup.poll : null} />
+        <ComposerPreview variants={variants} providers={providers} links={links} mediaCount={confirmation?.assets.length ?? 0} media={media} brandName={brand?.name ?? 'Brand'} poll={setup.content_type === 'poll' ? setup.poll : null} />
       </SectionCard>
 
       <SectionCard title="4. Confirm" subtitle="What will go out, where, and when (Central time)." icon="checkbox-circle-line">

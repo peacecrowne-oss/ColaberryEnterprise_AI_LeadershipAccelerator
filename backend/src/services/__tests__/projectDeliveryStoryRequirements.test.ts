@@ -86,11 +86,15 @@ describe('the requirement statements', () => {
     expect(g.requirements['REQ-002']).toBe('Stale prices are never shown.');
   });
 
-  it('asks only for the published plan, newest version', async () => {
+  it('asks for the newest plan, published or not', async () => {
+    // This used to require status = 'published', which was right while every build
+    // published itself. Now that an admin-initiated build is HELD for review, that
+    // restriction made the reviewer's own screen empty: the plan exists, and the one
+    // query that could show it refused to look. The newest version still wins.
     respond([task()], undefined);
     await getProjectGantt(PROJECT);
     const sql = String(mockQuery.mock.calls[2][0]);
-    expect(sql).toContain("status = 'published'");
+    expect(sql).not.toContain("status = 'published'");
     expect(sql).toContain('ORDER BY version DESC');
   });
 
@@ -128,5 +132,99 @@ describe('the requirement statements', () => {
     const g = await getProjectGantt(PROJECT);
     expect(g.requirements).toEqual({});
     expect(g.releases.flatMap((r) => r.tasks)).toHaveLength(1);
+  });
+});
+
+/**
+ * A BUILD HELD FOR REVIEW HAS TO BE REVIEWABLE.
+ *
+ *     "I should be able to see the project and drill down right away in the admin
+ *      dashboard as soon as the project is built."  (Ali, 2026-10-01)
+ *
+ * Measured on production the same day: a project built through the admin door sat at
+ * `drafted` with 30 requirements, 5 releases and 19 stories, and the board showed
+ * `0/0 tasks, no releases`. Tasks are written by materialisation, materialisation runs
+ * at publish, and the hold is precisely the decision not to publish yet — so the one
+ * screen built for reviewing a plan rendered empty for every plan awaiting review.
+ *
+ * The hold exists to keep an unreviewed plan away from the STUDENT. Hiding it from the
+ * reviewer was never the point.
+ */
+describe('a project whose plan is not published yet', () => {
+  const PLAN = {
+    requirements: [
+      { id: 'REQ-001', statement: 'Every specimen must have a chain of custody record.' },
+      { id: 'REQ-002', statement: 'Audit records must be retained for seven years.' },
+    ],
+    releases: [
+      { key: 'r0', name: 'Initial Skeleton', goal: 'The walking skeleton proves the trust spine.' },
+      { key: 'r1', name: 'Driver and Client Interfaces', goal: 'The two people who touch it daily.' },
+    ],
+    stories: [
+      { id: 'STORY-001', release: 'r0', title: 'Dispatcher creates and assigns stops', narrative: 'As a dispatcher…', fulfills: ['REQ-001'], acceptance: ['Given a stop, when assigned, then the driver sees it.'] },
+      { id: 'STORY-002', release: 'r0', title: 'Audit log implementation', narrative: 'As a supervisor…', fulfills: ['REQ-002'], acceptance: ['Given a change, when it lands, then it is logged.'] },
+      { id: 'STORY-003', release: 'r1', title: 'Driver views daily route', narrative: 'As a driver…', fulfills: [], acceptance: [] },
+    ],
+  };
+
+  it('renders the PLAN when nothing has been materialised, instead of an empty board', async () => {
+    respond([], PLAN);
+
+    const g = await getProjectGantt(PROJECT);
+
+    expect(g.releases.map((r) => r.release_key)).toEqual(['r0', 'r1']);
+    expect(g.releases.flatMap((r) => r.tasks).map((t) => t.id))
+      .toEqual(['STORY-001', 'STORY-002', 'STORY-003']);
+    expect(g.totals.tasks).toBe(3);
+  });
+
+  it('says so, so the page can tell a held plan from finished work', async () => {
+    respond([], PLAN);
+    expect((await getProjectGantt(PROJECT)).plan_only).toBe(true);
+  });
+
+  it('carries the traceability a reviewer is actually checking', async () => {
+    // Reviewing means reading a story against the requirement it claims to fulfil.
+    // Without these the drill-down is a list of titles.
+    respond([], PLAN);
+    const g = await getProjectGantt(PROJECT);
+    const story = g.releases.flatMap((r) => r.tasks).find((t) => t.id === 'STORY-001')!;
+
+    expect(story.fulfills).toEqual(['REQ-001']);
+    expect(story.acceptance).toEqual(['Given a stop, when assigned, then the driver sees it.']);
+    expect(g.requirements['REQ-001']).toBe('Every specimen must have a chain of custody record.');
+  });
+
+  it('claims no schedule it does not have', async () => {
+    // A held plan has not been scheduled: materialisation assigns the dates. Reporting
+    // a due date here would invent one, and reporting overdue would be worse.
+    respond([], PLAN);
+    const g = await getProjectGantt(PROJECT);
+    const tasks = g.releases.flatMap((r) => r.tasks);
+
+    expect(tasks.every((t) => t.due_on === null)).toBe(true);
+    expect(tasks.every((t) => !t.overdue && !t.slipped)).toBe(true);
+    expect(g.totals.complete).toBe(0);
+  });
+
+  it('PREFERS materialised tasks once they exist, so published work is never overwritten', async () => {
+    // The real work carries status, dates and what the student has actually finished.
+    // A plan would be a worse answer, and after publish both exist.
+    respond([task()], PLAN);
+
+    const g = await getProjectGantt(PROJECT);
+
+    expect(g.plan_only).toBe(false);
+    expect(g.releases.flatMap((r) => r.tasks).map((t) => t.id)).toEqual(['t1']);
+  });
+
+  it('is still empty for a project with neither tasks nor a plan', async () => {
+    // A project created and never built. Inventing releases for it would be a lie.
+    respond([], undefined);
+
+    const g = await getProjectGantt(PROJECT);
+
+    expect(g.releases).toEqual([]);
+    expect(g.plan_only).toBe(false);
   });
 });

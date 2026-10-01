@@ -358,6 +358,10 @@ export function buildExtractionSystemPrompt(source: ExtractionSource): string {
     '',
     'Do not invent integrations, systems, team sizes, budgets or timelines that were not discussed. An empty dimension is correct and useful; a filled-in guess is not.',
     'Leave a dimension out entirely rather than padding it.',
+    '',
+    'WHEN THEY STATE REQUIREMENTS, RECORD EVERY ONE:',
+    'If the customer lists what the system must do - numbered, bulleted, or just one after another - put EACH requirement in its own item under "requirements", in their words. Do not merge two into one, do not summarise a list into a theme, and do not stop early because the list is long. A customer who states thirty requirements and gets twelve back has been told their specification was heard when it was not.',
+    'This is the one place where completeness beats brevity. Everything else on this page is about not inventing; this is about not losing.',
   ].join('\n');
 }
 
@@ -383,6 +387,17 @@ export function buildExtractionUserPrompt(conversation: string, facts: Extractio
  * "the model contradicted the contract" lead to different fixes, and collapsing both into a
  * generic failure is how a broken extractor survives in production looking merely quiet.
  */
+/**
+ * Output ceiling for one extraction.
+ *
+ * Was 4000, which is roughly a dozen items once each carries a verbatim source_quote. A
+ * conversation stating thirty requirements therefore COULD NOT be recorded in full however
+ * the prompt was worded - the model's only way to fit was to compress, and it did: 13 items
+ * from 30 requirements, measured 2026-10-01. Asking for completeness under a ceiling that
+ * forbids it is asking for a quiet lie.
+ */
+export const EXTRACTION_MAX_TOKENS = 12_000;
+
 export async function extractUnderstanding(params: {
   conversation: string;
   source: ExtractionSource;
@@ -403,7 +418,7 @@ export async function extractUnderstanding(params: {
     system,
     user,
     undefined,
-    params.max_tokens ?? 4000,
+    params.max_tokens ?? EXTRACTION_MAX_TOKENS,
   );
 
   // chatJson returns {} for unparseable output. Distinguish that from a real but invalid

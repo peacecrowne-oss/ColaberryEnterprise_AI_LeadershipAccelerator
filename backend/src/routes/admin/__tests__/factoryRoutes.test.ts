@@ -27,6 +27,14 @@ const backfillUnassessedContract = jest.fn();
 jest.mock('../../../services/factory/factoryBackfill', () => ({ backfillUnassessedContract: (...a: any[]) => backfillUnassessedContract(...a) }));
 const lookupGovContractsContainer = jest.fn();
 jest.mock('../../../scripts/lib/factoryDemoContainer', () => ({ lookupGovContractsContainer: (...a: any[]) => lookupGovContractsContainer(...a) }));
+const dismissOpportunity = jest.fn();
+const restoreOpportunity = jest.fn();
+const listActiveDismissedKeys = jest.fn();
+jest.mock('../../../services/factory/opportunities/govOpportunityDismissals', () => ({
+  dismissOpportunity: (...a: any[]) => dismissOpportunity(...a),
+  restoreOpportunity: (...a: any[]) => restoreOpportunity(...a),
+  listActiveDismissedKeys: (...a: any[]) => listActiveDismissedKeys(...a),
+}));
 const ingestProposal = jest.fn();
 jest.mock('../../../services/factory/proposal/proposalIngest', () => ({ ingestProposal: (...a: any[]) => ingestProposal(...a) }));
 const generateDecomposition = jest.fn();
@@ -187,6 +195,15 @@ describe('GET /api/admin/factory/contracts', () => {
 });
 
 describe('GET /api/admin/factory/opportunities', () => {
+  const container = { tenant: { id: 'ten-1' }, org: { id: 'org-1' } };
+  const liveFeed = {
+    opportunities: [
+      { uuid: 'u1', title: 'A', agency: 'X', closeDate: null, fitScore: 70, estimatedValue: 100, sourceUrl: null },
+      { uuid: 'u2', title: 'B', agency: 'Y', closeDate: null, fitScore: 80, estimatedValue: 200, sourceUrl: null },
+    ],
+    source: 'live', snapshotDate: null, snapshotReason: null, totalAvailable: 50,
+  };
+
   it('returns the best-fit feed from the client (source + snapshotDate passthrough)', async () => {
     fetchBestFitOpportunities.mockResolvedValue({
       opportunities: [{ uuid: 'u1', title: 'A', agency: 'X', closeDate: null, fitScore: 70, estimatedValue: 100, sourceUrl: null }],
@@ -197,6 +214,93 @@ describe('GET /api/admin/factory/opportunities', () => {
     expect(res.body.source).toBe('snapshot');
     expect(res.body.snapshotDate).toBe('2026-06-08');
     expect(res.body.opportunities).toHaveLength(1);
+  });
+
+  it('filters out actively-dismissed keys and reports totalAvailable + dismissedCount', async () => {
+    fetchBestFitOpportunities.mockResolvedValue(liveFeed);
+    lookupGovContractsContainer.mockResolvedValue(container);
+    listActiveDismissedKeys.mockResolvedValue(new Set(['u1'])); // u1 dismissed for this team
+    const res = await request(app).get('/api/admin/factory/opportunities');
+    expect(res.status).toBe(200);
+    expect(res.body.opportunities.map((o: any) => o.uuid)).toEqual(['u2']);
+    expect(res.body.dismissedCount).toBe(1);
+    expect(res.body.totalAvailable).toBe(50);
+    expect(listActiveDismissedKeys).toHaveBeenCalledWith('ten-1'); // tenant-scoped
+  });
+
+  it('serves the UNFILTERED feed (dismissedCount 0) when the gov container is not configured — discovery stays up', async () => {
+    fetchBestFitOpportunities.mockResolvedValue(liveFeed);
+    lookupGovContractsContainer.mockResolvedValue(null);
+    const res = await request(app).get('/api/admin/factory/opportunities');
+    expect(res.status).toBe(200);
+    expect(res.body.opportunities).toHaveLength(2);
+    expect(res.body.dismissedCount).toBe(0);
+    expect(listActiveDismissedKeys).not.toHaveBeenCalled();
+  });
+
+  it('serves the UNFILTERED feed when the dismissal lookup throws (non-fatal)', async () => {
+    fetchBestFitOpportunities.mockResolvedValue(liveFeed);
+    lookupGovContractsContainer.mockResolvedValue(container);
+    listActiveDismissedKeys.mockRejectedValue(new Error('db down'));
+    const res = await request(app).get('/api/admin/factory/opportunities');
+    expect(res.status).toBe(200);
+    expect(res.body.opportunities).toHaveLength(2); // filter failure must not hide the feed
+    expect(res.body.dismissedCount).toBe(0);
+  });
+});
+
+describe('POST /api/admin/factory/opportunities/:key/dismiss — team-scoped, idempotent, fail-closed', () => {
+  const container = { tenant: { id: 'ten-1' }, org: { id: 'org-1' } };
+  beforeEach(() => { lookupGovContractsContainer.mockResolvedValue(container); });
+
+  it('dismisses an opportunity (200) with tenant/org + actor from the token, not the body', async () => {
+    dismissOpportunity.mockResolvedValue({ id: 'd1', opportunity_key: 'u1', restored_at: null });
+    const res = await request(app).post('/api/admin/factory/opportunities/u1/dismiss').send({ reason: 'out of scope', title: 'A', agency: 'X' });
+    expect(res.status).toBe(200);
+    expect(res.body.dismissed).toMatchObject({ opportunity_key: 'u1' });
+    const arg = dismissOpportunity.mock.calls[0][0];
+    expect(arg).toMatchObject({ tenantId: 'ten-1', organizationId: 'org-1', opportunityKey: 'u1', dismissedBy: 'admin@test', reason: 'out of scope' });
+  });
+
+  it('is idempotent at the route: a second dismiss of the same key still returns 200', async () => {
+    dismissOpportunity.mockResolvedValue({ id: 'd1', opportunity_key: 'u1', restored_at: null });
+    const r1 = await request(app).post('/api/admin/factory/opportunities/u1/dismiss').send({});
+    const r2 = await request(app).post('/api/admin/factory/opportunities/u1/dismiss').send({});
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(dismissOpportunity).toHaveBeenCalledTimes(2);
+  });
+
+  it('FAILS CLOSED (503) when the gov container is unresolvable — never dismisses', async () => {
+    lookupGovContractsContainer.mockResolvedValue(null);
+    const res = await request(app).post('/api/admin/factory/opportunities/u1/dismiss').send({});
+    expect(res.status).toBe(503);
+    expect(dismissOpportunity).not.toHaveBeenCalled();
+  });
+
+  it('400s a too-long opportunity key (never dismisses)', async () => {
+    const res = await request(app).post(`/api/admin/factory/opportunities/${'x'.repeat(201)}/dismiss`).send({});
+    expect(res.status).toBe(400);
+    expect(dismissOpportunity).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/admin/factory/opportunities/:key/restore — reversible, fail-closed', () => {
+  const container = { tenant: { id: 'ten-1' }, org: { id: 'org-1' } };
+  beforeEach(() => { lookupGovContractsContainer.mockResolvedValue(container); });
+
+  it('restores an opportunity (200), tenant-scoped', async () => {
+    restoreOpportunity.mockResolvedValue({ id: 'd1', opportunity_key: 'u1', restored_at: new Date().toISOString() });
+    const res = await request(app).post('/api/admin/factory/opportunities/u1/restore').send({});
+    expect(res.status).toBe(200);
+    expect(restoreOpportunity.mock.calls[0][0]).toMatchObject({ tenantId: 'ten-1', opportunityKey: 'u1' });
+  });
+
+  it('FAILS CLOSED (503) when the gov container is unresolvable', async () => {
+    lookupGovContractsContainer.mockResolvedValue(null);
+    const res = await request(app).post('/api/admin/factory/opportunities/u1/restore').send({});
+    expect(res.status).toBe(503);
+    expect(restoreOpportunity).not.toHaveBeenCalled();
   });
 });
 
@@ -329,7 +433,7 @@ describe('route-auth — every route is section-gated (required CI lint)', () =>
   it('the source guards every route with requireSection(\'program\')', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'factoryRoutes.ts'), 'utf8');
     const guards = src.match(/requireSection\('program'\)/g) ?? [];
-    expect(guards.length).toBeGreaterThanOrEqual(9); // sample, contract, contracts, approve, request-changes, opportunities, start, ingest-proposal, generate
+    expect(guards.length).toBeGreaterThanOrEqual(11); // + opportunities/:key/dismiss, opportunities/:key/restore (prev 9: sample, contract, contracts, approve, request-changes, opportunities, start, ingest-proposal, generate)
   });
 });
 

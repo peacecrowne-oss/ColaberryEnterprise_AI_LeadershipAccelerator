@@ -19,6 +19,10 @@ export interface Conversation {
   conversationId: string;
   agentId: string;
   messages: ConversationMessage[];
+  /** Reese manager-directed growth mission, Phase 2 (2026-09-30) — the real case this
+   * conversation is currently bound to, or null for a manager-wide conversation. Set only
+   * by an explicit "Discuss with Reese" action on a real ticket, never inferred from text. */
+  focusedTicketId: string | null;
 }
 
 export async function getConversation(agentId: string): Promise<Conversation> {
@@ -26,7 +30,10 @@ export async function getConversation(agentId: string): Promise<Conversation> {
   return res.data;
 }
 
-export async function sendMessage(agentId: string, message: string): Promise<Conversation> {
-  const res = await api.post<Conversation>(`/api/admin/agents/${agentId}/conversation/messages`, { message });
+// Reese manager-directed growth mission, Phase 2 (2026-09-30) — `ticketId`, when present,
+// binds (or explicitly switches) the conversation's focus to that real case; omit it to reuse
+// whatever case is already bound (manager-wide questions never need to pass this at all).
+export async function sendMessage(agentId: string, message: string, ticketId?: string): Promise<Conversation> {
+  const res = await api.post<Conversation>(`/api/admin/agents/${agentId}/conversation/messages`, { message, ticket_id: ticketId });
   return res.data;
 }

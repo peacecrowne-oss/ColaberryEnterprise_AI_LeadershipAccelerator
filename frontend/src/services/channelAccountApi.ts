@@ -14,7 +14,11 @@ import api from '../utils/api';
  * of dishonesty.
  */
 
-export type ChannelAccountStatus = 'connected' | 'needs_reconnect' | 'revoked' | 'disabled';
+/**
+ * `needs_selection`: one sign-in found several destinations on this network and nobody has said
+ * which the brand posts as. It holds a live token and publishes nothing until it is chosen.
+ */
+export type ChannelAccountStatus = 'connected' | 'needs_selection' | 'needs_reconnect' | 'revoked' | 'disabled';
 
 export type CredentialType = 'access_token' | 'refresh_token';
 
@@ -49,9 +53,14 @@ export interface ChannelAccount {
    * The server's verdict, the same one the Overview shows. Optional only so an older backend
    * still renders; the panel falls back to reading the access token itself when it is absent.
    */
-  health?: 'revoked' | 'expired' | 'unhealthy' | 'expiring' | 'ok';
+  health?: 'revoked' | 'expired' | 'unhealthy' | 'unselected' | 'expiring' | 'ok';
   /** When the account stops being usable, by the same rule as `health`. */
   usable_until?: string | null;
+  /**
+   * Set only when connecting or selecting this account DISCONNECTED others for the same network
+   * on the same brand. Present so the operator can be told what happened on their behalf.
+   */
+  replaced?: Array<{ id: string; display_name: string }>;
 }
 
 /**
@@ -146,6 +155,18 @@ export async function startConnect(connector: ConnectorKey, brandId: string): Pr
 
 export async function revokeChannelAccount(accountId: string): Promise<ChannelAccount> {
   const res = await api.delete(`/api/admin/channel-accounts/${accountId}`);
+  return res.data.account;
+}
+
+/**
+ * Choose which discovered destination this brand posts as.
+ *
+ * Only meaningful for an account whose status is `needs_selection` - one sign-in found several
+ * destinations on the same network. Selecting revokes the others; the returned account names
+ * them in `replaced`, so the operator is told rather than left to notice.
+ */
+export async function selectChannelAccount(accountId: string): Promise<ChannelAccount> {
+  const res = await api.post(`/api/admin/channel-accounts/${accountId}/select`);
   return res.data.account;
 }
 

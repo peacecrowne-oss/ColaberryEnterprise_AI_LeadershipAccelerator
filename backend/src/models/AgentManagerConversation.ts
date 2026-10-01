@@ -147,6 +147,11 @@ export interface AgentManagerConversationAttributes {
   participant_org_member_id?: string | null;
   pending_reliability_confirmation?: PendingReliabilityConfirmation | null;
   pending_intent_confirmation?: PendingIntentConfirmation | null;
+  /** Reese manager-directed growth mission, Phase 2 (2026-09-30) — the real case this
+   * conversation is currently discussing, or null for the existing, unchanged manager-wide
+   * question behavior. Set only by an explicit "Discuss with Reese on this case" action,
+   * never inferred from free text alone. See ensureAgentManagerConversationFocusedTicketSchema.ts. */
+  focused_ticket_id?: string | null;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -161,6 +166,7 @@ class AgentManagerConversation
   declare participant_org_member_id: string | null;
   declare pending_reliability_confirmation: PendingReliabilityConfirmation | null;
   declare pending_intent_confirmation: PendingIntentConfirmation | null;
+  declare focused_ticket_id: string | null;
   declare created_at: Date;
   declare updated_at: Date;
 }
@@ -173,6 +179,7 @@ AgentManagerConversation.init(
     participant_org_member_id: { type: DataTypes.UUID, allowNull: true, references: { model: 'org_members', key: 'id' } },
     pending_reliability_confirmation: { type: DataTypes.JSONB, allowNull: true },
     pending_intent_confirmation: { type: DataTypes.JSONB, allowNull: true },
+    focused_ticket_id: { type: DataTypes.UUID, allowNull: true, references: { model: 'tickets', key: 'id' } },
     created_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
     updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },

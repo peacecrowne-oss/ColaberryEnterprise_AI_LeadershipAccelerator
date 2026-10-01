@@ -18,6 +18,9 @@ import { fetchBestFitOpportunities } from '../../services/factory/opportunities/
 // tenant-scoped, fail-closed lookupGovContractsContainer (NOT the provisioning resolveGovContractsContainer,
 // which creates records) to scope the lookup to the fixed Government Contracts container.
 import { lookupGovContractsContainer } from '../../scripts/lib/factoryDemoContainer';
+// Team-scoped dismissals: hide a discovered v1 candidate from the whole team's feed (reversible). The service
+// lazy-loads its model inside each function, so this import never inits the ORM here.
+import { dismissOpportunity, restoreOpportunity, listActiveDismissedKeys } from '../../services/factory/opportunities/govOpportunityDismissals';
 // Slice 2: upload a solicitation zip -> deterministic source-cited requirements (no LLM).
 import multer from 'multer';
 import { ingestProposal } from '../../services/factory/proposal/proposalIngest';
@@ -214,11 +217,93 @@ router.post('/api/admin/factory/contract/:deliveryProjectId/request-changes', re
  */
 router.get('/api/admin/factory/opportunities', requireSection('program'), async (_req: Request, res: Response) => {
   try {
-    const feed = await fetchBestFitOpportunities(); // never throws
-    res.json(feed);
+    const feed = await fetchBestFitOpportunities(); // never throws (carries totalAvailable when live)
+    // Best-effort team-dismissal filter: hide opportunities this tenant has actively dismissed. Discovery must
+    // stay up even when the gov container isn't configured, so a missing/erroring container returns the feed
+    // UNFILTERED (unlike the dismiss/restore WRITE routes, which fail closed). dismissedCount reports how many
+    // rows this page hid so the UI can say "showing N of M · K dismissed".
+    let opportunities = feed.opportunities;
+    let dismissedCount = 0;
+    try {
+      const container = await lookupGovContractsContainer();
+      if (container) {
+        const dismissed = await listActiveDismissedKeys(container.tenant.id);
+        if (dismissed.size > 0) {
+          const before = opportunities.length;
+          opportunities = opportunities.filter((o) => !dismissed.has(o.uuid)); // new array; never mutate the feed
+          dismissedCount = before - opportunities.length;
+        }
+      }
+    } catch (filterErr: any) {
+      logFail('factory_opportunities_dismissal_filter_failed', filterErr, {}); // non-fatal: serve the unfiltered feed
+    }
+    res.json({ ...feed, opportunities, dismissedCount });
   } catch (err: any) {
     logFail('factory_opportunities_failed', err, {});
     res.status(500).json({ error: 'Could not load government opportunities.' });
+  }
+});
+
+/** The identity acting on the request (email preferred, sub fallback) — mirrors the gov-qualification routes. */
+function actorIdentity(req: Request): string {
+  return String((req as any).admin?.email ?? (req as any).admin?.sub ?? 'unknown-admin');
+}
+
+const dismissKeyParam = z.object({ key: z.string().min(1).max(200) });
+const dismissBody = z.object({
+  reason: z.string().max(500).optional(),
+  title: z.string().max(300).optional(),
+  agency: z.string().max(300).optional(),
+});
+
+/**
+ * POST /api/admin/factory/opportunities/:key/dismiss — hide a discovered v1 candidate from the WHOLE team's feed.
+ * Program-gated + tenant-scoped (fails closed 503 when the gov container is unresolvable). Idempotent: a re-dismiss
+ * reactivates the same row (service upsert), never a duplicate. `key` is OP's stable uuid — never a title.
+ */
+router.post('/api/admin/factory/opportunities/:key/dismiss', requireSection('program'), async (req: Request, res: Response) => {
+  const p = dismissKeyParam.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: 'Invalid opportunity key.' }); return; }
+  const b = dismissBody.safeParse(req.body ?? {});
+  if (!b.success) { res.status(400).json({ error: 'Invalid dismiss body.', issues: b.error.issues }); return; }
+  const container = await lookupGovContractsContainer();
+  if (!container) {
+    logFail('factory_opportunity_dismiss_scope', new Error('gov container not resolvable'), { key: p.data.key });
+    res.status(503).json({ error: 'The government contracts workspace is not configured.' });
+    return;
+  }
+  try {
+    const dismissed = await dismissOpportunity({
+      tenantId: container.tenant.id, organizationId: container.org.id, opportunityKey: p.data.key,
+      title: b.data.title ?? null, agency: b.data.agency ?? null, reason: b.data.reason ?? null,
+      dismissedBy: actorIdentity(req),
+    });
+    res.json({ dismissed });
+  } catch (err: any) {
+    logFail('factory_opportunity_dismiss_failed', err, { key: p.data.key });
+    res.status(500).json({ error: 'Could not dismiss the opportunity.' });
+  }
+});
+
+/**
+ * POST /api/admin/factory/opportunities/:key/restore — un-hide a previously dismissed opportunity (recovery).
+ * Program-gated + tenant-scoped (503 when unconfigured). Idempotent: restoring a non-dismissed key is a no-op.
+ */
+router.post('/api/admin/factory/opportunities/:key/restore', requireSection('program'), async (req: Request, res: Response) => {
+  const p = dismissKeyParam.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: 'Invalid opportunity key.' }); return; }
+  const container = await lookupGovContractsContainer();
+  if (!container) {
+    logFail('factory_opportunity_restore_scope', new Error('gov container not resolvable'), { key: p.data.key });
+    res.status(503).json({ error: 'The government contracts workspace is not configured.' });
+    return;
+  }
+  try {
+    const restored = await restoreOpportunity({ tenantId: container.tenant.id, opportunityKey: p.data.key });
+    res.json({ restored });
+  } catch (err: any) {
+    logFail('factory_opportunity_restore_failed', err, { key: p.data.key });
+    res.status(500).json({ error: 'Could not restore the opportunity.' });
   }
 });
 

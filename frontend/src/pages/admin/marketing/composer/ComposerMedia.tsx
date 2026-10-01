@@ -72,7 +72,11 @@ export default function ComposerMedia({ media, busy, enabled, upload = null, onA
   const [file, setFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const canAttach = enabled && !busy && file !== null && altText.trim().length >= 3;
+  // `enabled` used to mean "a draft exists" and disabled everything until it did, which read
+  // as a broken control: pick `video`, see a file picker, click it, nothing. The page now
+  // creates the draft when a file is attached, so what remains is the operator's own two
+  // requirements - a file, and alt text for someone who cannot see it.
+  const canAttach = !busy && file !== null && altText.trim().length >= 3;
 
   const submit = () => {
     if (!file || !canAttach) return;
@@ -114,7 +118,7 @@ export default function ComposerMedia({ media, busy, enabled, upload = null, onA
             type="file"
             className="form-control form-control-sm"
             accept={ACCEPT}
-            disabled={!enabled || busy}
+            disabled={busy}
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             data-testid="media-file"
           />
@@ -126,7 +130,7 @@ export default function ComposerMedia({ media, busy, enabled, upload = null, onA
             placeholder={file?.type === 'application/pdf' ? 'Document title, shown above the carousel on LinkedIn (required)' : 'Describe it for someone who cannot see it (required)'}
             value={altText}
             maxLength={300}
-            disabled={!enabled || busy}
+            disabled={busy}
             onChange={(e) => setAltText(e.target.value)}
             data-testid="media-alt"
           />
@@ -136,9 +140,9 @@ export default function ComposerMedia({ media, busy, enabled, upload = null, onA
         </button>
       </div>
       <div className="form-text">
-        {enabled
-          ? 'PNG, JPEG or GIF up to 10 MB; MP4 up to 200 MB; PDF up to 100 MB (LinkedIn document posts). Location and camera data is removed from images automatically.'
-          : 'Create the draft first, then attach media.'}
+        PNG, JPEG or GIF up to 10 MB; MP4 up to 200 MB; PDF up to 100 MB (LinkedIn document posts).
+        Location and camera data is removed from images automatically.
+        {!enabled && ' Attaching creates the draft, naming it after the file if you have not titled it yet.'}
       </div>
     </div>
   );

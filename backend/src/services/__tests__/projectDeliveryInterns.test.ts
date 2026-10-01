@@ -22,7 +22,7 @@ jest.mock('../projectDeliveryDetail', () => ({ getReleaseSummaries: jest.fn() })
 jest.mock('../projectReleaseMeta', () => ({}));
 jest.mock('../projectRiskModel', () => ({ assessPortfolio: jest.fn() }));
 
-import { getProjectDelivery } from '../projectDeliveryService';
+import { getProjectDelivery, audienceOf } from '../projectDeliveryService';
 
 /** The SQL of the first call — the projects query whose WHERE clause is under test. */
 const sqlOfFirstCall = (): string => String(mockQuery.mock.calls[0][0]);
@@ -101,5 +101,37 @@ describe('the interns filter', () => {
     const sql = sqlOfFirstCall();
     expect(sql).toContain('p.name IS NOT NULL');
     expect(sql).toContain('NOT IN (:departed)');
+  });
+});
+
+/**
+ * Which group a project belongs to.
+ *
+ *     "default it to active intern projects but allow the ability to add class projects
+ *      and unenrolled students projects."  (Ali, 2026-10-01)
+ *
+ * The board opens on interns, so the precedence between "is an intern" and "sits in a
+ * class" decides whether an intern's project is on the default view at all.
+ */
+describe('audienceOf', () => {
+  it('calls an intern an intern even though they also sit in a class', () => {
+    // THE failure this guards. An intern's enrollment still points at their CLASS cohort,
+    // because the internship is a secondary membership row. Reading cohort_id first would
+    // label every intern 'class' and empty the board's default view.
+    expect(audienceOf({ is_intern: true, cohort_id: 'class-1' })).toBe('intern');
+  });
+
+  it('calls a class student a class student', () => {
+    expect(audienceOf({ is_intern: false, cohort_id: 'class-1' })).toBe('class');
+  });
+
+  it('calls someone in neither unenrolled', () => {
+    // The prospect and guest builds that come out of the enquiry list.
+    expect(audienceOf({ is_intern: false, cohort_id: null })).toBe('unenrolled');
+  });
+
+  it('treats a missing flag as not an intern rather than throwing', () => {
+    expect(audienceOf({})).toBe('unenrolled');
+    expect(audienceOf({ cohort_id: 'class-1' })).toBe('class');
   });
 });

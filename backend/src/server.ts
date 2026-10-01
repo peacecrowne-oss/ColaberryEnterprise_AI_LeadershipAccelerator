@@ -69,6 +69,7 @@ import { ensureProjectArchiveSchema } from './db/ensureProjectArchiveSchema';
 import { ensureProjectApprovalSchema } from './db/ensureProjectApprovalSchema';
 import { ensureContractTrackSchema } from './db/ensureContractTrackSchema';
 import { ensureGovQualificationSchema } from './db/ensureGovQualificationSchema';
+import { ensureGovOpportunityDismissalSchema } from './db/ensureGovOpportunityDismissalSchema';
 import { ensureFactoryTaskSchema } from './db/ensureFactoryTaskSchema';
 import { ensureEmailSendLedgerSchema } from './db/ensureEmailSendLedgerSchema';
 import { ensureInternshipSchema } from './db/ensureInternshipSchema';
@@ -84,6 +85,7 @@ import { ensureAiAgentHierarchySchema } from './db/ensureAiAgentHierarchySchema'
 import { ensureAiAgentAutonomyLevelSchema } from './db/ensureAiAgentAutonomyLevelSchema';
 import { ensureAiAgentAutonomySourceSchema } from './db/ensureAiAgentAutonomySourceSchema';
 import { ensureAiAgentAbacOverrideSchema } from './db/ensureAiAgentAbacOverrideSchema';
+import { ensureAiAgentReportsToAuditSchema } from './db/ensureAiAgentReportsToAuditSchema';
 import { ensureAiAgentConsolidationSchema } from './db/ensureAiAgentConsolidationSchema';
 import { ensureAgentPersonaVersionHistorySchema } from './db/ensureAgentPersonaVersionHistorySchema';
 import { ensureAgentRoleCharterSchema } from './db/ensureAgentRoleCharterSchema';
@@ -104,6 +106,7 @@ import { ensureStudentAssessmentSchema } from './db/ensureStudentAssessmentSchem
 import { ensureChecklistInstanceSchema } from './db/ensureChecklistInstanceSchema';
 import { ensureAgentManagerConversationReliabilitySchema } from './db/ensureAgentManagerConversationReliabilitySchema';
 import { ensureAgentManagerConversationIntentSchema } from './db/ensureAgentManagerConversationIntentSchema';
+import { ensureAgentManagerConversationFocusedTicketSchema } from './db/ensureAgentManagerConversationFocusedTicketSchema';
 import { ensureEvidenceSchema } from './db/ensureEvidenceSchema';
 import { ensureCaseStudySchema, assertCaseStudySchema } from './db/ensureCaseStudySchema';
 import {
@@ -2722,6 +2725,10 @@ async function start(): Promise<void> {
   // (and the qualification table itself) — no existing table is altered; placed after the contract
   // tables since build_authorizations references delivery_projects.
   await ensureGovQualificationSchema();
+  // AI Project Factory: the team-scoped gov-opportunity dismissal record (gov_opportunity_dismissals). A single
+  // additive NEW table so a reviewer can hide a discovered v1 candidate from the whole team's feed (reversible).
+  // No existing table is altered; it FKs to nothing (keyed by tenant_id + OP's opportunity uuid).
+  await ensureGovOpportunityDismissalSchema();
   // AI Project Factory: the executor/accountable/skills/judgment/confidence/source-evidence
   // attributes, added to student_tasks as new nullable columns (the archived_at/approval_state
   // pattern). Existing rows are untouched and unset until the factory populates them.
@@ -2836,6 +2843,10 @@ async function start(): Promise<void> {
   // Real-enforcement scoping, Phase 3 — abac_mode_override ('shadow'|'enforce'|null),
   // the per-agent switch Ali asked for. Additive, idempotent, no flag.
   await ensureAiAgentAbacOverrideSchema();
+  // Reports-to editor (2026-09-30) — reports_to_set_at/reports_to_set_by, the real audit
+  // trail for the new "change who this agent reports to" admin write. Additive, idempotent,
+  // no flag.
+  await ensureAiAgentReportsToAuditSchema();
   // AI Employee Consolidation Program, Phase 4 — record_kind/parent_agent_id/
   // migration_status, the program's legacy-item-to-employee ownership fields.
   // Additive, idempotent, no flag.
@@ -2916,6 +2927,9 @@ async function start(): Promise<void> {
   // intent-confirmation workflow's one new column (pending_intent_confirmation)
   // on the same table. Additive, idempotent, no flag.
   await ensureAgentManagerConversationIntentSchema();
+  // Reese manager-directed growth mission, Phase 2 — the real case a conversation is
+  // currently focused on (focused_ticket_id), on the same table. Additive, idempotent, no flag.
+  await ensureAgentManagerConversationFocusedTicketSchema();
   // AI Workforce Reset, Phase D.1 "Inventory" — department/scope (Ali signed off on
   // abac-design.md's own recommendations wholesale, 2026-08-24). Additive, idempotent, no flag.
   await ensureAiAgentDepartmentScopeSchema();

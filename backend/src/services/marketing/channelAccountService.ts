@@ -46,6 +46,12 @@ export interface ConnectInput {
   refreshTokenExpiresAt?: Date | null;
   connectedBy?: string | null;
   metadata?: Record<string, unknown>;
+  /**
+   * True when ONE sign-in discovered several destinations on this network and the operator has
+   * not yet said which the brand should use. Such an account is sealed as `needs_selection`,
+   * publishes nothing, and revokes nothing. Set by the OAuth callback, never by a human caller.
+   */
+  awaitingSelection?: boolean;
 }
 
 /** The account as any caller outside this module may see it. No secret, by construction. */
@@ -152,6 +158,47 @@ function assertExactlyOneOwner(input: Pick<ConnectInput, 'brandId' | 'ownerMembe
 }
 
 /**
+ * One per network per brand: revoke whatever else is live on this network for the same owner.
+ *
+ * Shared by `connectAccount` (the ordinary single-destination case) and `selectAccount` (the
+ * operator choosing between destinations one sign-in discovered), so the rule has exactly one
+ * implementation and the two paths cannot drift apart.
+ *
+ * Credentials are destroyed, not just orphaned - a revoked account must not leave a usable token
+ * behind it.
+ */
+async function supersedeSiblings(
+  account: ChannelAccount,
+  actorId: string | null,
+): Promise<Array<{ id: string; display_name: string }>> {
+  const ownerWhere = account.brand_id
+    ? { brand_id: account.brand_id }
+    : { owner_member_id: account.owner_member_id ?? null };
+  const superseded = await ChannelAccount.findAll({
+    where: {
+      tenant_id: account.tenant_id,
+      provider: account.provider,
+      ...ownerWhere,
+      revoked_at: { [Op.is]: null } as any,
+      id: { [Op.ne]: account.id } as any,
+    },
+  });
+  const replaced: Array<{ id: string; display_name: string }> = [];
+  for (const old of superseded) {
+    const destroyed = await ConnectorCredential.destroy({ where: { channel_account_id: old.id } });
+    await old.update({ status: 'revoked', revoked_at: new Date(), revoked_by: actorId });
+    replaced.push({ id: old.id, display_name: old.display_name });
+    log('info', 'account_superseded', {
+      account_id: old.id,
+      replaced_by: account.id,
+      provider: old.provider,
+      credentials_destroyed: destroyed,
+    });
+  }
+  return replaced;
+}
+
+/**
  * Connect an account and seal its tokens.
  *
  * Idempotent on `(tenant, provider, provider_account_id)` among non-revoked rows: reconnecting
@@ -193,6 +240,23 @@ export async function connectAccount(input: ConnectInput): Promise<AccountView> 
     },
   });
 
+  /**
+   * Is this one of several destinations discovered in a single sign-in?
+   *
+   * `inBatch` suppresses the supersede rule for EVERY member of the batch, including one that
+   * stays connected. That is what makes the outcome independent of the order the provider
+   * happened to list the destinations in: whichever way round they arrive, the brand keeps the
+   * connection it had and the others wait to be chosen. Letting an already-connected member
+   * supersede would revoke its own siblings if it happened to be processed last - the same
+   * destruction this change exists to stop, moved one step later.
+   *
+   * `awaiting` is narrower: it decides the STATUS of this row. An account that is already the
+   * live connection stays connected, because re-running a Meta sign-in and ticking the same Page
+   * again must not demote a working connection to "please choose".
+   */
+  const inBatch = Boolean(input.awaitingSelection);
+  const awaiting = inBatch && existing?.status !== 'connected';
+
   const fields = {
     tenant_id: input.tenantId,
     brand_id: input.brandId ?? null,
@@ -202,7 +266,7 @@ export async function connectAccount(input: ConnectInput): Promise<AccountView> 
     display_name: input.displayName,
     handle: input.handle ?? null,
     avatar_url: input.avatarUrl ?? null,
-    status: 'connected' as ChannelAccountStatus,
+    status: (awaiting ? 'needs_selection' : 'connected') as ChannelAccountStatus,
     granted_scopes: input.grantedScopes ?? [],
     missing_scopes: input.missingScopes ?? [],
     connected_by: input.connectedBy ?? null,
@@ -224,31 +288,8 @@ export async function connectAccount(input: ConnectInput): Promise<AccountView> 
     await writeCredential(account, 'refresh_token', input.refreshToken, input.refreshTokenExpiresAt ?? null);
   }
 
-  // One per network per brand: whatever else was on this network for this owner steps aside.
-  const ownerWhere = input.brandId
-    ? { brand_id: input.brandId }
-    : { owner_member_id: input.ownerMemberId ?? null };
-  const superseded = await ChannelAccount.findAll({
-    where: {
-      tenant_id: input.tenantId,
-      provider: input.provider,
-      ...ownerWhere,
-      revoked_at: { [Op.is]: null } as any,
-      id: { [Op.ne]: account.id } as any,
-    },
-  });
-  const replaced: Array<{ id: string; display_name: string }> = [];
-  for (const old of superseded) {
-    const destroyed = await ConnectorCredential.destroy({ where: { channel_account_id: old.id } });
-    await old.update({ status: 'revoked', revoked_at: new Date(), revoked_by: input.connectedBy ?? null });
-    replaced.push({ id: old.id, display_name: old.display_name });
-    log('info', 'account_superseded', {
-      account_id: old.id,
-      replaced_by: account.id,
-      provider: old.provider,
-      credentials_destroyed: destroyed,
-    });
-  }
+  // A batch that discovered several destinations supersedes NOTHING. See supersedeSiblings.
+  const replaced = inBatch ? [] : await supersedeSiblings(account, input.connectedBy ?? null);
 
   log('info', existing ? 'account_reconnected' : 'account_connected', {
     account_id: account.id,
@@ -256,6 +297,52 @@ export async function connectAccount(input: ConnectInput): Promise<AccountView> 
     owner: account.brand_id ? 'brand' : 'member',
     granted_scope_count: (input.grantedScopes ?? []).length,
     missing_scope_count: (input.missingScopes ?? []).length,
+  });
+
+  return { ...toView(account, await credentialsFor(account.id)), ...(replaced.length ? { replaced } : {}) };
+}
+
+/**
+ * Choose which discovered destination this brand posts as.
+ *
+ * The other side of `awaitingSelection`. One sign-in can hand back several destinations - three
+ * LinkedIn Pages you administer, four Facebook Pages you ticked - and the rule is one per network
+ * per brand, so somebody has to say which. Selecting promotes this account to `connected` and
+ * applies the ordinary supersede rule, which revokes the siblings AND the previous connection, if
+ * any, destroying their credentials.
+ *
+ * Idempotent: selecting the account that is already connected re-applies the rule and returns the
+ * same view, so a double-click cannot produce a different outcome than a single one.
+ */
+export async function selectAccount(input: {
+  tenantId: string;
+  accountId: string;
+  selectedBy?: string | null;
+}): Promise<AccountView> {
+  const account = await ChannelAccount.findOne({
+    where: { id: input.accountId, tenant_id: input.tenantId },
+  });
+  // Scoped by tenant in the query itself, so a wrong tenant is indistinguishable from a wrong id.
+  if (!account) throw new WorkflowError('That account does not exist.', 404, 'AccountNotFound');
+
+  if (account.revoked_at || account.status === 'revoked') {
+    throw new WorkflowError(
+      'That account was disconnected and its credentials were destroyed. Connect the network again.',
+      409,
+      'AccountRevoked',
+    );
+  }
+
+  if (account.status !== 'connected') {
+    await account.update({ status: 'connected' });
+  }
+  const replaced = await supersedeSiblings(account, input.selectedBy ?? null);
+
+  log('info', 'account_selected', {
+    account_id: account.id,
+    provider: account.provider,
+    brand_id: account.brand_id,
+    replaced_count: replaced.length,
   });
 
   return { ...toView(account, await credentialsFor(account.id)), ...(replaced.length ? { replaced } : {}) };

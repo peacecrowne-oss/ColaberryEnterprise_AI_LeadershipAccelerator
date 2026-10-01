@@ -258,6 +258,12 @@ export interface ItemMedia {
   durationMs: number | null;
   /** PDFs only, when the file states its page count plainly. */
   pages: number | null;
+  /**
+   * Short-lived signed URL for the actual file, so the preview can show it. Null when the server
+   * has no public base URL configured - the preview falls back to a placeholder rather than
+   * rendering a broken image.
+   */
+  url: string | null;
 }
 
 export async function listItemMedia(id: string): Promise<ItemMedia[]> {

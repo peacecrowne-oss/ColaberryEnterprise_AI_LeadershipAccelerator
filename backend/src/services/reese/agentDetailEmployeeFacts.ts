@@ -90,6 +90,13 @@ export interface AgentDetailResult {
     max_proposals_per_run: number | null;
     autonomy_level_set_at: Date | null;
     autonomy_level_source: 'auto' | 'manual' | null;
+    /** Reports-to editor (2026-09-30) — the raw hierarchy columns, exposed alongside the
+     * already-resolved display chain (the page's own top-level `reports_to` field) so a
+     * write path can prefill from the real current value instead of guessing it from a
+     * derived chain that goes `null` on a dangling target even when `reports_to_type` is
+     * still set. */
+    reports_to_type: 'human' | 'agent' | null;
+    reports_to_id: string | null;
     /** Real-enforcement scoping, Phase 3 (2026-09-20) — the per-agent shadow/enforce
      * switch Ali asked for. `abac_mode_override` is `null` for the real, untouched
      * default (every agent until an admin deliberately sets one); `abac_effective_mode`

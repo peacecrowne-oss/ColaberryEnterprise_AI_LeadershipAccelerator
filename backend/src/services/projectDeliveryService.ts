@@ -59,6 +59,24 @@ export interface ProjectReadiness {
   gaps: string[];
 }
 
+/**
+ * Which group a project's owner is in.
+ *
+ * AN INTERNSHIP OUTRANKS A CLASS SEAT, and that is the whole rule. An intern is normally
+ * enrolled in a class as well — the internship is a secondary `cohort_memberships` row and
+ * their enrollment still points at the class cohort — so reading `cohort_id` first would
+ * label every intern a class project and hide them from the board's default view. That is
+ * the same mistake `internsOnly` exists to avoid, one layer up.
+ *
+ * Pure, and exported, so the precedence is testable without standing up the query.
+ */
+export function audienceOf(
+  r: { is_intern?: boolean | null; cohort_id?: string | null },
+): ProjectRow['audience'] {
+  if (r.is_intern) return 'intern';
+  return r.cohort_id ? 'class' : 'unenrolled';
+}
+
 export interface ProjectRow {
   project_id: string;
   name: string | null;
@@ -74,6 +92,19 @@ export interface ProjectRow {
    * put interns first and still show everyone — see the query for why that matters.
    */
   is_intern: boolean;
+  /**
+   * Who the project belongs to, as one word.
+   *
+   *     "in the Projects section, default it to active intern projects but allow the
+   *      ability to add class projects and unenrolled students projects."  (Ali, 2026-10-01)
+   *
+   * Derived rather than stored: an intern holds an active internship membership, a class
+   * student is anyone else sitting in a cohort, and unenrolled is a project whose owner is
+   * in neither — the prospect and guest builds that come out of the enquiry list. Three
+   * named groups beat three booleans at the call site, where the question is always "show
+   * me which of these".
+   */
+  audience: 'intern' | 'class' | 'unenrolled';
   has_repo: boolean;
   repo_url: string | null;
   /** Which store answered: 'connection' (the record), 'project_column' (legacy
@@ -371,6 +402,7 @@ export async function getProjectDelivery(
       stage,
       maturity_score: r.maturity_score,
       is_intern: !!r.is_intern,
+      audience: audienceOf({ is_intern: r.is_intern, cohort_id: r.cohort_id }),
       has_repo,
       repo_url: has_repo ? r.repo_url : null,
       repo_source: has_repo ? (r.repo_source as 'connection' | 'project_column') : 'none',

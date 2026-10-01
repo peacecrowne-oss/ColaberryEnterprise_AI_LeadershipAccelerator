@@ -227,3 +227,58 @@ describe('one account per network, per brand', () => {
     expect(container.querySelector('[data-testid="connect-replaces-linkedin"]')).toBeNull();
   });
 });
+
+
+describe('choosing between destinations one sign-in found', () => {
+  /**
+   * A brand posts as ONE account per network. A Meta login can hand back four Pages and a
+   * LinkedIn admin of three company Pages gets all three, so somebody has to say which. Before
+   * this, each was connected in turn and each revoked the one before it - the last discovered
+   * won, silently, while the banner reported all of them as added.
+   */
+
+  const waiting = [
+    account({ id: 'acc-a', display_name: 'Colaberry Training', status: 'needs_selection', health: 'unselected' }),
+    account({ id: 'acc-b', display_name: 'Colaberry Enterprise', status: 'needs_selection', health: 'unselected' }),
+  ];
+
+  it('says a choice is needed, and how many, once at the top', () => {
+    render({ accounts: waiting, onSelect: () => {} });
+    const banner = container.querySelector('[data-testid="selection-needed"]')!;
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toMatch(/found 2 accounts on the same network/);
+    // What choosing costs, said before the click rather than after it.
+    expect(banner.textContent).toMatch(/the others will be disconnected/);
+  });
+
+  it('reads as a decision, not as a fault', () => {
+    render({ accounts: waiting, onSelect: () => {} });
+    const row = container.querySelector('[data-testid="account-acc-a"]')!;
+    expect(row.textContent).toContain('Not chosen yet');
+    expect(row.textContent).not.toContain('Token expired');
+    expect(row.textContent).not.toContain('Connected');
+  });
+
+  it('offers the choice on each one and reports which was chosen', () => {
+    const chosen: string[] = [];
+    render({ accounts: waiting, onSelect: (id: string) => chosen.push(id) });
+    const button = container.querySelector('[data-testid="select-acc-b"]') as HTMLButtonElement;
+    expect(button.textContent).toBe('Use this one');
+    act(() => { button.click(); });
+    expect(chosen).toEqual(['acc-b']);
+  });
+
+  it('an account that IS chosen offers no choice - there is nothing to decide', () => {
+    render({ accounts: [account({ id: 'acc-a' })], onSelect: () => {} });
+    expect(container.querySelector('[data-testid="select-acc-a"]')).toBeNull();
+    expect(container.querySelector('[data-testid="selection-needed"]')).toBeNull();
+  });
+
+  it('an unchosen account does not make Connect warn that it would replace something', () => {
+    // `connectedByProvider` drives that warning. An account awaiting a decision is not yet the
+    // brand's connection, so claiming connecting would replace it would be wrong.
+    render({ accounts: waiting, onSelect: () => {} });
+    const warning = container.querySelector('[data-testid="connect-replaces-linkedin_org"]');
+    expect(warning).toBeNull();
+  });
+});

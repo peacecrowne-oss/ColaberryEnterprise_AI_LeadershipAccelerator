@@ -22,7 +22,7 @@ export interface BrandTab {
 
 export const BRAND_TABS: readonly BrandTab[] = [
   { key: 'channels', label: 'Channels', hint: 'The networks this brand posts to, and whether each one still works.' },
-  { key: 'domains', label: 'Sending domains', hint: 'The domains this brand sends email from, and whether they are verified.' },
+  { key: 'domains', label: 'Sending domains', hint: 'The domains this brand sends email from. Configured outside the platform for now.' },
   { key: 'approvals', label: 'Approvals', hint: 'Posts for this brand waiting for someone to approve them.' },
   { key: 'campaigns', label: 'Campaigns', hint: 'The campaigns and tracked-link slugs posts can be attributed to.' },
   { key: 'details', label: 'Details', hint: 'The brand itself: its name, timezone and public address.' },
@@ -77,21 +77,42 @@ export function setupSteps(facts: BrandSetupFacts): SetupStep[] {
       done: facts.channelsNeedingAttention === 0,
       tab: 'channels',
     },
-    {
-      key: 'domain',
-      label: 'Verify a sending domain for email',
-      // Null means readiness has not loaded; not evidence of absence, so it is not "missing" yet.
-      done: facts.domainCount === null ? true : facts.verifiedDomainCount > 0,
-      tab: 'domains',
-    },
+    // No domain step. Verifying a sending domain is not something this product can do - see
+    // domainNotice - and a checklist item nobody can complete is worse than no item at all.
   ];
+}
+
+/**
+ * What the Domains tab has to admit.
+ *
+ * `brand_domains` rows exist, carry `verification_status`, and are rendered - but NOTHING in the
+ * backend ever writes that column. There is no DNS health check, and no route creates or edits a
+ * domain; rows come only from the seed. So every domain reads `pending` for ever, `preflightSender`
+ * can never pass, and branded email sending on a brand sender profile always throws.
+ *
+ * Until a verification job exists, the honest thing is to say that here rather than to keep
+ * "verify a sending domain" on a checklist as though it were a click away. Found 2026-09-29 while
+ * mapping how channels relate to domains; the checklist item had shipped that morning.
+ */
+export function domainNotice(facts: BrandSetupFacts): { tone: 'info' | 'warning'; text: string } {
+  const n = facts.domainCount;
+  if (n === null) return { tone: 'info', text: 'Send readiness has not loaded yet.' };
+  const counted = n === 1 ? '1 sending domain is' : `${n} sending domains are`;
+  return {
+    tone: 'warning',
+    text: `${counted} recorded for this brand. They cannot be added, edited or verified here: `
+      + 'nothing in the platform checks DNS yet, so every domain reads "pending" and branded '
+      + 'email sending stays blocked. Social publishing is unaffected - it does not use domains.',
+  };
 }
 
 /** The line at the top of the page. Says what is left, or that nothing is. */
 export function setupSummary(facts: BrandSetupFacts): { done: boolean; text: string } {
   const outstanding = setupSteps(facts).filter((s) => !s.done);
   if (outstanding.length === 0) {
-    return { done: true, text: 'This brand is set up: it has a working connection and a verified sending domain.' };
+    // Says only what it can stand behind. It used to claim "and a verified sending domain",
+    // which no brand can have while nothing verifies one.
+    return { done: true, text: 'This brand is set up: it has a working connection to post with.' };
   }
   const first = outstanding[0];
   return {

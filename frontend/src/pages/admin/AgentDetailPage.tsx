@@ -180,11 +180,21 @@ export default function AgentDetailPage() {
   // separate piece of state/prop — never widening the shared
   // onNavigate: (tab: TabKey) => void signature 25+ other call sites on
   // this page depend on.
-  const [talkDraft, setTalkDraft] = useState<string | null>(null);
+  // Reese manager-directed growth mission, Phase 2 (2026-09-30) — widened from a plain
+  // string to carry the real ticket id alongside the draft text (root cause of "Discuss with
+  // Reese" producing "I cannot access the conversation details": the ticket's own id was
+  // discarded right here, before it ever reached the backend — see this run's
+  // execution-contract.md for the full trace). `ticketId: null` is the honest shape for a
+  // non-ticket draft (e.g. the Results & Reports "Discuss this report" button below).
+  const [talkDraft, setTalkDraft] = useState<{ text: string; ticketId: string | null } | null>(null);
   const handleDraftTalk = useCallback((ticket: AgentDetailTicket) => {
     const who = ticket.ticket_number != null ? `ticket #${ticket.ticket_number}` : 'this ticket';
-    setTalkDraft(`Can you catch me up on ${who} — "${ticket.title}"? It's currently ${getTicketStatusLabel(ticket.status)}.`);
+    setTalkDraft({
+      text: `Can you catch me up on ${who} — "${ticket.title}"? It's currently ${getTicketStatusLabel(ticket.status)}.`,
+      ticketId: ticket.id,
+    });
   }, []);
+  const handleDraftTalkText = useCallback((text: string) => setTalkDraft({ text, ticketId: null }), []);
   // Agent Detail polish round 2 (2026-09-29) — Ali, live: clicking a
   // cross-tab link (e.g. Talk's "Inspect work records") switched tabs
   // correctly but landed wherever the window happened to be scrolled,
@@ -356,7 +366,7 @@ export default function AgentDetailPage() {
       onReactivate={handleReactivate}
     >
       {activeTab === 'overview' && (
-        <AgentOverviewV2 detail={detail} inboxItems={inboxItems} inboxLoading={inboxLoading} inboxError={inboxError} onInboxChanged={fetchInbox} onNavigate={setActiveTab} />
+        <AgentOverviewV2 detail={detail} inboxItems={inboxItems} inboxLoading={inboxLoading} inboxError={inboxError} onInboxChanged={fetchInbox} onNavigate={setActiveTab} onReportsToChanged={fetchDetail} />
       )}
       {activeTab === 'work' && (
         <AgentWorkV2 detail={detail} onNavigate={setActiveTab} onDraftTalk={handleDraftTalk} />
@@ -374,7 +384,7 @@ export default function AgentDetailPage() {
         />
       )}
       {activeTab === 'performance_settings' && (
-        <AgentPerformanceSettingsTab agentId={id} detail={detail} inboxItems={inboxItems} onDraftTalkText={setTalkDraft} onNavigate={setActiveTab} />
+        <AgentPerformanceSettingsTab agentId={id} detail={detail} inboxItems={inboxItems} onDraftTalkText={handleDraftTalkText} onNavigate={setActiveTab} />
       )}
     </AgentDetailLayout>
   );

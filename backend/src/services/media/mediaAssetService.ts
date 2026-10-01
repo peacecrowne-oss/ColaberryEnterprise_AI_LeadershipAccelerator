@@ -3,7 +3,8 @@ import { looksLikeMp4, probeMp4, Mp4ParseError, type Mp4Facts } from './mp4Probe
 import { looksLikePdf, probePdf, PdfParseError, type PdfFacts } from './pdfProbe';
 import { ContentItem, ContentItemMedia, MediaAsset } from '../../models';
 import { WorkflowError, assertWritable } from '../content/contentWorkflowService';
-import { MediaStoreError, assertAcceptable, put } from './mediaStore';
+import { MediaStoreError, assertAcceptable, put, signedUrl } from './mediaStore';
+import { mediaPublicBaseUrl } from '../publishing/adapterRegistry';
 
 /**
  * mediaAssetService — attach an uploaded file to a content item.
@@ -234,6 +235,24 @@ export interface ItemMediaView {
   originalFilename: string | null;
   durationMs: number | null;
   pages: number | null;
+  /**
+   * A short-lived signed URL the browser can load, so the composer's preview shows the ACTUAL
+   * file rather than a grey rectangle. The same `/m/` route Meta fetches from, with the same
+   * expiry - no second way to serve media, and nothing new made public.
+   *
+   * Null when the server has no public base URL configured. The preview falls back to its
+   * placeholder then, rather than rendering a broken image.
+   */
+  url: string | null;
+}
+
+/** Sign, or return null. `signedUrl` throws without JWT_SECRET or on a key it does not recognise. */
+function safeSignedUrl(storageKey: string, base: string): string | null {
+  try {
+    return signedUrl(storageKey, base).url;
+  } catch {
+    return null;
+  }
 }
 
 export async function listItemMedia(contentItemId: string): Promise<ItemMediaView[]> {
@@ -241,6 +260,8 @@ export async function listItemMedia(contentItemId: string): Promise<ItemMediaVie
   if (links.length === 0) return [];
   const assets = await MediaAsset.findAll({ where: { id: links.map((l) => l.media_asset_id) } });
   const byId = new Map(assets.map((a) => [a.id, a]));
+  // Signed once per listing, not per asset lookup, so every URL in one response shares an expiry.
+  const base = mediaPublicBaseUrl();
   return links.flatMap((l) => {
     const a = byId.get(l.media_asset_id);
     if (!a) return [];
@@ -249,6 +270,9 @@ export async function listItemMedia(contentItemId: string): Promise<ItemMediaVie
       mediaAssetId: a.id, mimeType: a.mime_type, byteSize: a.byte_size == null ? null : Number(a.byte_size), width: a.width, height: a.height,
       altText: a.alt_text, position: l.position, originalFilename: a.original_filename, durationMs: a.duration_ms,
       pages: pagesOf(a.metadata),
+      // A signing failure must not take the whole listing down with it: the media still exists
+      // and the operator still needs to see that it is attached.
+      url: base ? safeSignedUrl(a.storage_key, base) : null,
     }];
   });
 }

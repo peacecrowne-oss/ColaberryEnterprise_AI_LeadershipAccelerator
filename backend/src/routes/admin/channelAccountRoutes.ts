@@ -12,6 +12,7 @@ import {
   revokeAccount,
   rotateCredential,
   credentialsNeedingRewrap,
+  selectAccount,
 } from '../../services/marketing/channelAccountService';
 
 /**
@@ -225,6 +226,33 @@ router.delete('/api/admin/channel-accounts/:id', requireAdmin, async (req: Reque
     }
     res.json({ account: await revokeAccount(id.data, req.admin?.sub ?? null) });
   } catch (err) { fail(res, err, 'channel_account_revoke_failed'); }
+});
+
+/**
+ * Choose which discovered destination this brand posts as.
+ *
+ * Used when one sign-in found several destinations on the same network - the rule is one per
+ * network per brand, so the operator says which. Selecting revokes the others, which is why the
+ * response names them: `account.replaced`.
+ */
+router.post('/api/admin/channel-accounts/:id/select', requireAdmin, async (req: Request, res: Response) => {
+  const id = UUID.safeParse(req.params.id);
+  if (!id.success) return bad(res, { id: ['Must be a UUID'] });
+  try {
+    const scope = await adminTenantScope(req.admin);
+    const existing = await getAccount(id.data);
+    // Same 404 for "no such account" and "not yours" - a different answer would confirm the id.
+    if (!existing || !scopeAllows(scope, existing.tenant_id)) {
+      return void res.status(404).json({ error: 'Channel account not found', error_class: 'NotFound' });
+    }
+    res.json({
+      account: await selectAccount({
+        tenantId: existing.tenant_id,
+        accountId: id.data,
+        selectedBy: req.admin?.sub ?? null,
+      }),
+    });
+  } catch (err) { fail(res, err, 'channel_account_select_failed'); }
 });
 
 export default router;

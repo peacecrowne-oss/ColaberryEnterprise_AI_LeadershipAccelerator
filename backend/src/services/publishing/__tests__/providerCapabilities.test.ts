@@ -76,21 +76,39 @@ describe('an unsupported action yields Handoff, and never a Publish button', () 
 });
 
 describe('an unapproved app yields Handoff even for a supported action', () => {
-  it('Facebook Page supports publish, but the app is not submitted - so Handoff', () => {
-    // The state of the world today: the App Review package exists and Ali has not submitted
-    // it. A Publish button here would be the fake button spec 8.2 forbids.
+  it('Facebook Page is approved self-serve, so only the env switch stands between it and direct', () => {
+    // This test asserted TWO handoff reasons until 2026-09-30 - "not approved" and "switched
+    // off" - because Facebook was recorded as `not_submitted`. A real post to the Agent Cory
+    // Page from the stored Page token then returned HTTP 200 with the app unpublished and no
+    // App Review: Standard Access lets an app-role user post to a Page they administer, so
+    // approval was never a gate here. One reason remains, and it names the thing to go and do.
     const caps = getProviderCapabilities('meta_facebook_page');
     expect(caps.supports.publish).toBe(true);
+    expect(caps.appReview.status).toBe('self_serve');
     const mode = decidePublishMode(caps, 'publish');
     expect(mode.mode).toBe('handoff');
     if (mode.mode === 'handoff') {
-      // Two problems with two fixes: submit the app, and switch the connector on. The second
-      // reason changed wording on 2026-09-18, when the Meta adapter landed: it is no longer
-      // "not built" but "built and switched off", which is a different thing to go and do.
-      expect(mode.reasons).toHaveLength(2);
-      expect(mode.reasons[0]).toMatch(/not approved/);
-      expect(mode.reasons[0]).toMatch(/not_submitted/);
-      expect(mode.reasons[1]).toMatch(/built but switched off/);
+      expect(mode.reasons).toHaveLength(1);
+      expect(mode.reasons[0]).toMatch(/built but switched off/);
+      // And it must NOT claim approval is missing, or the fix gets looked for in the wrong place.
+      expect(mode.reasons[0]).not.toMatch(/not approved/);
+    }
+  });
+
+  it('Instagram is self-serve too, proved on its OWN flow rather than inherited from Facebook', () => {
+    // This asserted `not_submitted` for a few hours on 2026-09-30, deliberately, because
+    // Facebook passing said nothing about Instagram - it publishes through its own
+    // container/publish flow. It was then proved on that flow: creating a real media container
+    // against @agentcory.ai returned HTTP 200 and a creation id, with the app unpublished and no
+    // App Review. Only the gate moved; the "prove each flow separately" rule stands.
+    const caps = getProviderCapabilities('meta_instagram');
+    expect(caps.appReview.status).toBe('self_serve');
+    const mode = decidePublishMode(caps, 'publish');
+    expect(mode.mode).toBe('handoff');
+    if (mode.mode === 'handoff') {
+      // Switched off in this process, so one reason - and it must not blame approval.
+      expect(mode.reasons).toHaveLength(1);
+      expect(mode.reasons[0]).toMatch(/built but switched off/);
     }
   });
 

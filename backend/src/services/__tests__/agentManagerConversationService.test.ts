@@ -104,6 +104,18 @@ jest.mock('../agentInterventionIntentService', () => ({
   detectInterventionIntentQuery: jest.fn(() => null),
   buildInterventionIntentReply: jest.fn(),
 }));
+// Reese manager-directed growth mission, Phase 2 (2026-09-30) — same isolation reasoning as
+// every mock above: summaryGeneratorService.ts itself imports { Ticket, TicketActionLink,
+// WorkLedgerEvent } from the '../../models' barrel, which triggers the full association
+// graph. This file only needs "no focused case" for its own unrelated test messages (every
+// test here calls sendManagerMessage without a ticketId) — real focused-case behavior is
+// agentManagerConversationService.focusedCase.test.ts's job.
+jest.mock('../../models/Ticket', () => ({ __esModule: true, default: { findByPk: jest.fn() } }));
+jest.mock('../../models/AdminUser', () => ({ __esModule: true, default: { findOne: jest.fn() } }));
+jest.mock('../agentBlueprint/legacyCreatorAliases', () => ({ buildCreatorIdMatchList: jest.fn(() => []) }));
+jest.mock('../workLedger/summaryGeneratorService', () => ({ generateTicketSummary: jest.fn() }));
+jest.mock('../evidence/evidenceService', () => ({ getEvidenceForTicket: jest.fn() }));
+jest.mock('../evidence/decisionRecordService', () => ({ getDecisionsForTicket: jest.fn() }));
 
 import { getInstrumentedOpenAI } from '../openaiInstrumented';
 import { buildAgentManagerConversationSystemPrompt } from '../agentBlueprint/agentManagerConversationPrompt';
@@ -197,7 +209,11 @@ describe('sendManagerMessage', () => {
     const result = await sendManagerMessage('agent-1', 'manager@colaberry.com', 'org-member-1', 'How are you doing?');
 
     expect(mockMessageCreate).toHaveBeenCalledWith(expect.objectContaining({ role: 'manager', content: 'How are you doing?' }));
-    expect(mockBuildPrompt).toHaveBeenCalledWith('agent-1', 'Reese', 'You are Reese.');
+    // Reese manager-directed growth mission, Phase 2 (2026-09-30) — now carries a 4th,
+    // focused-case-context argument (null here — this test's conversation has no bound
+    // case, the manager-wide-question case; real focused-case behavior is
+    // agentManagerConversationService.focusedCase.test.ts's job).
+    expect(mockBuildPrompt).toHaveBeenCalledWith('agent-1', 'Reese', 'You are Reese.', null);
     expect(mockCreateCompletion).toHaveBeenCalledTimes(1);
     expect(mockMessageCreate).toHaveBeenCalledWith(expect.objectContaining({ role: 'agent', content: 'Here is my answer.' }));
     expect(result.messages).toHaveLength(2);

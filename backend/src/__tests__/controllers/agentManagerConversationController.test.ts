@@ -2,7 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { env } from '../../config/env';
-import { getConversationHistory, sendManagerMessage, AgentNotFoundError } from '../../services/agentManagerConversationService';
+import { getConversationHistory, sendManagerMessage, AgentNotFoundError, TicketNotAccessibleError } from '../../services/agentManagerConversationService';
 import agentManagerConversationRoutes from '../../routes/admin/agentManagerConversationRoutes';
 
 // Reese Agentic AI Employee mission, Checkpoint B — requireActual() below still
@@ -72,6 +72,23 @@ jest.mock('../../services/managerApprovalDecisionIntentService', () => ({
   toPendingRejectConfirmation: jest.fn(),
   applyConfirmedApprove: jest.fn(),
   applyConfirmedReject: jest.fn(),
+}));
+
+// Phase 2 case-aware manager chat — the same requireActual() above now also
+// executes agentManagerConversationService.ts's new summaryGeneratorService.ts
+// import, which imports { Ticket, TicketActionLink, WorkLedgerEvent } from the
+// models barrel — the exact same association-graph crash the mocks above
+// already guard against. Mocked wholesale for the same reason; this
+// controller test never exercises real ticket-summary/evidence/decision
+// retrieval (getConversationHistory/sendManagerMessage are overridden below).
+jest.mock('../../services/workLedger/summaryGeneratorService', () => ({
+  generateTicketSummary: jest.fn(),
+}));
+jest.mock('../../services/evidence/evidenceService', () => ({
+  getEvidenceForTicket: jest.fn(),
+}));
+jest.mock('../../services/evidence/decisionRecordService', () => ({
+  getDecisionsForTicket: jest.fn(),
 }));
 
 jest.mock('../../services/agentManagerConversationService', () => {
@@ -153,7 +170,41 @@ describe('POST /api/admin/agents/:id/conversation/messages', () => {
       .send({ message: 'How are you doing?' });
 
     expect(res.status).toBe(201);
-    expect(mockSendManagerMessage).toHaveBeenCalledWith('agent-1', 'manager@colaberry.com', 'org-member-1', 'How are you doing?');
+    expect(mockSendManagerMessage).toHaveBeenCalledWith('agent-1', 'manager@colaberry.com', 'org-member-1', 'How are you doing?', null);
+  });
+
+  it('happy path: a real ticket id in the request body is forwarded to the service as the 5th arg', async () => {
+    mockOrgMemberFindOne.mockResolvedValue({ id: 'org-member-1' });
+    mockIsAgentInHumanDownstream.mockResolvedValue(true);
+    mockSendManagerMessage.mockResolvedValue({ conversationId: 'conv-1', agentId: 'agent-1', messages: [{ role: 'agent', content: 'reply' }] });
+
+    const res = await request(buildApp())
+      .post('/api/admin/agents/agent-1/conversation/messages')
+      .set('Authorization', `Bearer ${managerToken()}`)
+      .send({ message: 'What is the status of this case?', ticket_id: '11111111-1111-4111-8111-111111111111' });
+
+    expect(res.status).toBe(201);
+    expect(mockSendManagerMessage).toHaveBeenCalledWith(
+      'agent-1',
+      'manager@colaberry.com',
+      'org-member-1',
+      'What is the status of this case?',
+      '11111111-1111-4111-8111-111111111111'
+    );
+  });
+
+  it('boundary: a ticket the manager does not own 404s honestly without leaking existence (TicketNotAccessibleError)', async () => {
+    mockOrgMemberFindOne.mockResolvedValue({ id: 'org-member-1' });
+    mockIsAgentInHumanDownstream.mockResolvedValue(true);
+    mockSendManagerMessage.mockRejectedValue(new TicketNotAccessibleError());
+
+    const res = await request(buildApp())
+      .post('/api/admin/agents/agent-1/conversation/messages')
+      .set('Authorization', `Bearer ${managerToken()}`)
+      .send({ message: 'What about ticket X?', ticket_id: '22222222-2222-4222-8222-222222222222' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('That case was not found.');
   });
 
   it('BREAK: an admin outside the chain is 403d and never reaches the service (never triggers a real LLM call)', async () => {

@@ -17,6 +17,47 @@ function roughTimeAgo(date: Date): string {
 }
 
 /**
+ * Reese manager-directed growth mission, Phase 2 (2026-09-30) — the real per-case context
+ * this prompt builder was missing entirely, the root cause of "Discuss with Reese"
+ * producing "I cannot access the conversation details" (see this run's
+ * execution-contract.md for the full trace). Built from real ticket/summary/evidence/
+ * decision data by agentManagerConversationService.ts's buildFocusedCaseContext() —
+ * never fabricated here.
+ */
+export interface FocusedCaseContext {
+  ticketId: string;
+  ticketNumber: number | null;
+  title: string;
+  description: string | null;
+  status: string;
+  summary: { outcome: string; proof: string; humanAction: string; hasEvidence: boolean };
+  evidenceCount: number;
+  decisionCount: number;
+}
+
+function buildFocusedCaseBlock(ctx: FocusedCaseContext): string {
+  const who = ctx.ticketNumber != null ? `ticket #${ctx.ticketNumber}` : 'this case';
+  const lines = [
+    `\nFOCUSED CASE — the manager chose to discuss ${who} specifically. Answer about THIS case,`,
+    `not your work in general, unless they clearly broaden the question:`,
+    `- Title: "${ctx.title}"`,
+    `- Status: ${ctx.status}`,
+    ctx.description ? `- Description: ${ctx.description}` : `- Description: none recorded.`,
+    `- Outcome (observed, from real records): ${ctx.summary.outcome}`,
+    `- Proof: ${ctx.summary.proof}`,
+    `- Human action: ${ctx.summary.humanAction}`,
+    ctx.summary.hasEvidence
+      ? `- ${ctx.evidenceCount} real evidence artifact${ctx.evidenceCount === 1 ? '' : 's'} and ${ctx.decisionCount} recorded decision${ctx.decisionCount === 1 ? '' : 's'} are linked to this case.`
+      : `- No real evidence is linked to this case yet — say so plainly if asked about proof.`,
+    `\nWhen answering "why did you open this" or "when will you close it": use only what's`,
+    `recorded above. If the real triggering reason was never recorded, say that honestly —`,
+    `never invent one. Distinguish an observed fact (what's recorded here) from a plan, a`,
+    `recommendation, or genuine uncertainty; label any reconstruction as inference, not memory.`,
+  ];
+  return lines.join('\n');
+}
+
+/**
  * agentManagerConversationPrompt — the system prompt for a manager talking
  * directly to their agent. AI Workforce Management, Checkpoint C (2026-08-28).
  *
@@ -51,6 +92,7 @@ export async function buildAgentManagerConversationSystemPrompt(
   agentId: string,
   agentName: string,
   agentSystemPrompt: string | null,
+  focusedCaseContext: FocusedCaseContext | null = null,
 ): Promise<string> {
   // Reese Agentic AI Employee mission, Capability 8 — runtime context layers
   // 1-2 (immutable platform safety rules, then role charter and authority)
@@ -66,6 +108,8 @@ export async function buildAgentManagerConversationSystemPrompt(
       ? agentSystemPrompt
       : `You are ${agentName}, an AI agent at Colaberry. No system prompt has been configured for you yet — answer plainly and honestly, and say so if asked what your instructions are.`,
   );
+
+  if (focusedCaseContext) parts.push(buildFocusedCaseBlock(focusedCaseContext));
 
   const directives = await getActiveDirectiveTexts(agentId);
   if (directives.length) {

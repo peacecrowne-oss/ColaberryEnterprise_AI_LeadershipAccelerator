@@ -1,0 +1,41 @@
+WEBVTT
+
+1
+00:00:00.500 --> 00:00:08.100
+Every answer this platform's AI writes is stamped with the prompt family, the version and the model that produced it.
+
+2
+00:00:10.500 --> 00:00:17.840
+Across every stamped row there is one version and one model, and not a single row is missing its stamp.
+
+3
+00:00:20.500 --> 00:00:25.940
+Read from the platform's own tables on 28 September 2026.
+
+4
+00:00:28.500 --> 00:00:38.640
+The stamp, on a keyless local copy of the platform at the pinned commit seeded with invented rows. Three prompt families, every one of them at the same version.
+
+5
+00:00:40.500 --> 00:00:48.150
+A version is a promise that the same text produced the same answers, and two edits to prompt text landed without it changing.
+
+6
+00:00:50.500 --> 00:00:58.270
+Six families are registered and three of them ever ran, so most of the library is a catalogue of things nothing calls.
+
+7
+00:01:00.500 --> 00:01:09.680
+The page that reports on the AI's own output names the calls, the intents and the consent split, and never names the prompt behind any of them.
+
+8
+00:01:11.500 --> 00:01:20.010
+Every setting an operator can change, and none of them is a prompt. The text lives in source files, so changing a word is a deploy.
+
+9
+00:01:22.500 --> 00:01:27.440
+The voice script is prompt text too, and it carries no version at all.
+
+10
+00:01:30.500 --> 00:01:38.270
+The stamp is not the problem. A stamp that cannot tell you which text ran is the problem, and no screen in the product shows it.

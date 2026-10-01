@@ -45,9 +45,10 @@ interface Props {
   inboxError: string | null;
   onInboxChanged: () => void;
   onNavigate: (tab: TabKey) => void;
+  onReportsToChanged: () => void;
 }
 
-export default function AgentOverviewV2({ detail, inboxItems, inboxLoading, inboxError, onInboxChanged, onNavigate }: Props) {
+export default function AgentOverviewV2({ detail, inboxItems, inboxLoading, inboxError, onInboxChanged, onNavigate, onReportsToChanged }: Props) {
   const agentDisplayName = detail.identity?.display_name || detail.agent.agent_name;
 
   return (
@@ -61,7 +62,7 @@ export default function AgentOverviewV2({ detail, inboxItems, inboxLoading, inbo
       <AgentOverviewV2OperationalState detail={detail} inboxItems={inboxItems} inboxLoading={inboxLoading} inboxError={inboxError} />
       <div className="adv2-grid">
         <AgentOverviewV2MainColumn detail={detail} onNavigate={onNavigate} />
-        <AgentOverviewV2Sidebar detail={detail} agentId={detail.agent.id} agentDisplayName={agentDisplayName} />
+        <AgentOverviewV2Sidebar detail={detail} agentId={detail.agent.id} agentDisplayName={agentDisplayName} onReportsToChanged={onReportsToChanged} />
       </div>
     </div>
   );

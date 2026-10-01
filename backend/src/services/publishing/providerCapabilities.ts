@@ -102,9 +102,17 @@ export const PROVIDER_CAPABILITIES: Record<ProviderKey, ProviderCapabilities> = 
     requiredScopes: ['pages_manage_posts', 'pages_read_engagement', 'pages_show_list', 'pages_manage_engagement'],
     accountType: 'Facebook Page administered by the connected user',
     appReview: {
-      status: 'not_submitted',
+      // PROVED, not assumed (2026-09-30): a real post to the Agent Cory Page from the stored
+      // Page token returned HTTP 200 and a post id, with the app UNPUBLISHED and no App Review
+      // submitted. Meta's Standard Access lets a user with a role on the app publish to Pages
+      // they administer, which is exactly how Colaberry posts to its own Pages - so this is
+      // self-serve in the same sense as linkedin_member, not an approval we are waiting on.
+      //
+      // App Review is still required to let people OUTSIDE the app's roles connect their own
+      // Pages; that is a different capability and does not gate this one.
+      status: 'self_serve',
       reviewedAt: null,
-      note: 'App Review package prepared (docs/marketing/APP_REVIEW_META.md); submission is Ali\'s. Until approved, publishing is Handoff.',
+      note: 'Standard Access: anyone with a role on the Meta app can publish to Pages they administer, verified against the live API on 2026-09-30. App Review (docs/marketing/APP_REVIEW_META.md) is needed only to let people without an app role connect their own Pages.',
     },
     rateLimits: { postsPerDay: null, note: 'Graph API rate limits are per-app and per-page; not a fixed post count.' },
     requirements: { altText: 'recommended', disclosureForPaid: true },
@@ -126,9 +134,15 @@ export const PROVIDER_CAPABILITIES: Record<ProviderKey, ProviderCapabilities> = 
     requiredScopes: ['instagram_basic', 'instagram_content_publish', 'instagram_manage_comments', 'instagram_manage_insights', 'pages_show_list'],
     accountType: 'Instagram Business or Creator account linked to a Facebook Page',
     appReview: {
-      status: 'not_submitted',
+      // PROVED separately from meta_facebook_page, because a sibling passing is not evidence:
+      // Instagram publishes through its own container/publish flow. On 2026-09-30 a real
+      // container was created against @agentcory.ai (POST /{ig-user-id}/media returned HTTP 200
+      // and a creation id) with the app UNPUBLISHED and no App Review. Container creation is the
+      // step `instagram_content_publish` gates, so the permission is settled; `media_publish` was
+      // deliberately NOT called, so nothing was posted and the container expired.
+      status: 'self_serve',
       reviewedAt: null,
-      note: 'Shares the Meta App Review package. Instagram has NO text-only post type: a text draft cannot be published here at all.',
+      note: 'Standard Access: an app-role user can publish to an Instagram professional account linked to a Page they administer. Verified against the live API on 2026-09-30 by creating a media container. Instagram has NO text-only post type: a text draft cannot be published here at all.',
     },
     rateLimits: { postsPerDay: 100, note: 'Content Publishing API: 100 posts per rolling 24 hours per account (checked 2026-09-18); a carousel counts as one.' },
     requirements: { altText: 'recommended', disclosureForPaid: true },

@@ -9,10 +9,10 @@
  *                                 the `X-API-Key` header. It is NOT an admin account — writes stay 401 — but it
  *                                 has admin-level READ so `sourceUrl` is returned un-redacted.
  *   OPPORTUNITY_PULSE_BASE      — default https://op.colaberry.ai
- *   OPPORTUNITY_PULSE_LIST_PATH — default /api/v1/bonfire/best-fit?limit=10 (the digest-parity endpoint, which
- *                                 delegates to richDigest.topBonfire, so it matches the "Top 10 Bonfire
- *                                 Contracts to Bid" email; the generic /api/v1/bonfire/opportunities sorts
- *                                 NULL scores FIRST and is NOT the digest order).
+ *   OPPORTUNITY_PULSE_LIST_PATH — default /api/v1/bonfire/best-fit?limit=50 (the digest-parity endpoint, which
+ *                                 delegates to richDigest.topBonfire; best-fit caps at ~50, so limit=50 surfaces the
+ *                                 whole CURATED good set, not just the top 10. The generic /api/v1/bonfire/
+ *                                 opportunities sorts NULL scores FIRST and is NOT the digest order).
  *
  * Each row is a BonfireOpportunity: { id(uuid), title, agency, priorityScore, fitScore (0-100 int, nullable),
  * estimatedValue (BIGINT CENTS returned as a JSON STRING), closeDate (ISO-8601 timestamptz), sourceUrl,
@@ -26,7 +26,7 @@ import {
 } from './govOpportunity';
 
 const DEFAULT_BASE = 'https://op.colaberry.ai';
-const DEFAULT_LIST_PATH = '/api/v1/bonfire/best-fit?limit=10';
+const DEFAULT_LIST_PATH = '/api/v1/bonfire/best-fit?limit=50';
 const TIMEOUT_MS = 8000;
 const VALID_PURSUIT: readonly string[] = ['none', 'pursuing', 'submitted', 'declined'];
 
@@ -63,6 +63,19 @@ const toDateOnly = (v: unknown): string | null =>
 const toStrOrNull = (v: unknown): string | null =>
   typeof v === 'string' && v.trim() !== '' ? v : null;
 
+// Max characters forwarded for the preliminary summary — a sense-making blurb, not the full solicitation text.
+const PRELIMINARY_SUMMARY_MAX = 2000;
+
+// A length-capped, string-ONLY coercion for the preliminary summary. A non-string (object/array/number/boolean)
+// is dropped to null (never String()-coerced), and the result is trimmed and hard-capped so a huge upstream blob
+// can never bloat the browser payload. Display-only; this text can never become a confirmed requirement.
+const toCappedSummary = (v: unknown): string | null => {
+  const s = toStrOrNull(v);
+  if (s === null) return null;
+  const trimmed = s.trim();
+  return trimmed.length > PRELIMINARY_SUMMARY_MAX ? `${trimmed.slice(0, PRELIMINARY_SUMMARY_MAX - 1)}…` : trimmed;
+};
+
 /**
  * Explicit nested allowlist for the verdict object — only known fields cross to the browser; every other nested
  * property is dropped. A non-object (or array, or a bare string) is MALFORMED and maps to null (unassessed), so
@@ -87,9 +100,10 @@ function mapVetVerdict(raw: unknown): VetVerdict | null {
 
 /**
  * Maps a raw BonfireOpportunity row to a GovOpportunity via an EXPLICIT ALLOWLIST — we never forward the whole
- * upstream row to the browser, and we deliberately omit the source's unverified free text (overview, strategy,
- * submissionRequirements, rawText) so it can't become a confirmed requirement. Grounded in the confirmed OP
- * contract:
+ * upstream row to the browser. We still omit submissionRequirements/rawText so they can't become confirmed
+ * requirements; the source's overview/strategy IS forwarded, but ONLY as the length-capped, display-only
+ * `preliminarySummary` (labeled "preliminary, unverified" in the UI) — it never reaches the qualification/coverage/
+ * approval path, which is served by the separate opDetailClient. Grounded in the confirmed OP contract:
  *  - `estimatedValue` is BIGINT cents as a STRING; coerced then converted to dollars, and tagged `valueBasis`
  *    ('unverified' when OP sends no provenance) — the page renders it as unverified, never forecast revenue.
  *  - `pursuitStatus` (none|pursuing|submitted|declined) is preserved verbatim; `declined` stays distinct from
@@ -131,6 +145,9 @@ export function mapOpportunity(raw: any): GovOpportunity | null {
     vetVerdict: mapVetVerdict(raw.vetVerdict),
     vetVerdictPresent,
     freshness: hasFreshness ? { enrichedAt: raw.enrichedAt ?? null, attachmentsFetchedAt: raw.attachmentsFetchedAt ?? null } : null,
+    // Preliminary, UNVERIFIED blurb for the Details popup — overview preferred, then strategy, then summary. Capped
+    // and string-only. Display-only: this is NOT a requirement and is never consumed by coverage/approval.
+    preliminarySummary: toCappedSummary(raw.overview ?? raw.strategy ?? raw.summary),
   };
 }
 
@@ -177,7 +194,10 @@ export async function fetchBestFitOpportunities(): Promise<GovOpportunityFeed> {
       const opportunities = rows
         .map(mapOpportunity)
         .filter((o): o is GovOpportunity => o !== null);
-      return { opportunities, source: 'live', snapshotDate: null, snapshotReason: null };
+      // How many the source has in total (best-fit caps ~50, the full pool is larger) so the page can say
+      // "showing N of M". From pagination.total; falls back to the returned row count when OP omits it.
+      const totalAvailable = toNum(body?.pagination?.total ?? body?.total) ?? opportunities.length;
+      return { opportunities, source: 'live', snapshotDate: null, snapshotReason: null, totalAvailable };
     } catch (err: any) {
       if (attempt === 0) continue; // retry once on network/timeout
       logDegraded('opp_pulse_error', { error_class: err?.constructor?.name ?? 'Error', message: err?.message });

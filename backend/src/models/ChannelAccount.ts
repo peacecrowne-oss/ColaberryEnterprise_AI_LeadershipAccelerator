@@ -18,10 +18,18 @@ import { sequelize } from '../config/database';
  * that scopes a query must branch on which one is set rather than assuming `brand_id`.
  */
 
-export type ChannelAccountStatus = 'connected' | 'needs_reconnect' | 'revoked' | 'disabled';
+/**
+ * `needs_selection` is an account that exists and holds a live token but has NOT been chosen as
+ * the brand's destination for its network. One sign-in can discover several destinations - an
+ * admin of three LinkedIn Pages, a Facebook login with four Pages ticked - and the rule is one
+ * per network per brand, so the operator has to say which. Until they do, the account publishes
+ * nothing: `resolveAccountFor` only ever looks at `connected`.
+ */
+export type ChannelAccountStatus = 'connected' | 'needs_selection' | 'needs_reconnect' | 'revoked' | 'disabled';
 
 export const CHANNEL_ACCOUNT_STATUSES: readonly ChannelAccountStatus[] = [
   'connected',
+  'needs_selection',
   'needs_reconnect',
   'revoked',
   'disabled',

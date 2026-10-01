@@ -22,6 +22,7 @@ import {
   revokeAccount,
   rotateCredential,
   credentialsNeedingRewrap,
+  selectAccount,
 } from '../channelAccountService';
 import { MASTER_KEY_ENV } from '../../security/credentialVault';
 import { WorkflowError } from '../../content/contentWorkflowService';
@@ -90,7 +91,12 @@ describe('connect', () => {
   });
 
   it('returns a view with lifecycle metadata and no secret anywhere in it', async () => {
-    const view = await connectAccount({ ...CONNECT, tokenExpiresAt: new Date('2026-10-01T00:00:00Z') });
+    // RELATIVE, not a literal date. This read `new Date('2026-10-01T00:00:00Z')` and asserted
+    // `expired: false`, which was true when it was written and became false at midnight UTC on
+    // 2026-10-01 - failing CI on every open PR at once, for a reason that had nothing to do with
+    // any of them. A test that asserts "not expired" has to derive its date from now.
+    const notYetExpired = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const view = await connectAccount({ ...CONNECT, tokenExpiresAt: notYetExpired });
     const asText = JSON.stringify(view);
     expect(asText).not.toContain(TOKEN);
     expect(asText).not.toContain('ciphertext');
@@ -314,5 +320,99 @@ describe('one account per network, per brand', () => {
     await expect(connectAccount(CONNECT)).rejects.toThrow();
     expect(old.update).not.toHaveBeenCalled();
     expect(mockCredential.destroy).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('several destinations from one sign-in', () => {
+  /**
+   * The bug this closes. The OAuth callback connects each discovered destination in turn, and the
+   * one-per-network rule ran on every one of them - so connecting three LinkedIn Pages meant page
+   * 2 revoking page 1 and page 3 revoking page 2, with their credentials destroyed, while the
+   * redirect still reported "3 accounts added". The last one discovered won, silently.
+   */
+
+  it('lands as needs_selection and revokes nothing', async () => {
+    const other = fakeAccount({ id: 'acc-other', provider_account_id: 'page-1', display_name: 'Other Page' });
+    mockAccount.findAll.mockResolvedValue([other]);
+
+    const view = await connectAccount({ ...CONNECT, awaitingSelection: true });
+
+    expect(view.status).toBe('needs_selection');
+    expect(view.replaced).toBeUndefined();
+    expect(other.update).not.toHaveBeenCalled();
+    expect(mockCredential.destroy).not.toHaveBeenCalled();
+  });
+
+  it('still seals its token, so choosing it later needs no second sign-in', async () => {
+    await connectAccount({ ...CONNECT, awaitingSelection: true });
+    expect(storedCredentials).toHaveLength(1);
+    expect(JSON.stringify(storedCredentials[0])).not.toContain(TOKEN);
+  });
+
+  it('an account that is ALREADY the live connection stays connected rather than being demoted', async () => {
+    // Re-running a Meta sign-in and ticking the same Page again must not turn a working
+    // connection into "please choose".
+    mockAccount.findOne.mockResolvedValue(fakeAccount({ status: 'connected' }));
+    const view = await connectAccount({ ...CONNECT, awaitingSelection: true });
+    expect(view.status).toBe('connected');
+  });
+
+  it('and that member of the batch still supersedes nothing, whatever order it arrived in', async () => {
+    // The order a provider lists destinations in must not decide the outcome. If the connected
+    // one superseded, arriving last would revoke the siblings created moments earlier - the same
+    // destruction, one step later.
+    const sibling = fakeAccount({ id: 'acc-sib', provider_account_id: 'page-2' });
+    mockAccount.findOne.mockResolvedValue(fakeAccount({ status: 'connected' }));
+    mockAccount.findAll.mockResolvedValue([sibling]);
+
+    await connectAccount({ ...CONNECT, awaitingSelection: true });
+
+    expect(sibling.update).not.toHaveBeenCalled();
+    expect(mockCredential.destroy).not.toHaveBeenCalled();
+  });
+
+  it('a single discovered destination is unaffected and connects normally', async () => {
+    const view = await connectAccount(CONNECT);
+    expect(view.status).toBe('connected');
+  });
+});
+
+describe('choosing which destination the brand posts as', () => {
+  it('promotes the chosen account and revokes the others, naming them', async () => {
+    const chosen = fakeAccount({ id: 'acc-chosen', status: 'needs_selection' });
+    const loser = fakeAccount({ id: 'acc-loser', provider_account_id: 'page-2', display_name: 'Second Page' });
+    mockAccount.findOne.mockResolvedValue(chosen);
+    mockAccount.findAll.mockResolvedValue([loser]);
+
+    const view = await selectAccount({ tenantId: TENANT, accountId: 'acc-chosen', selectedBy: 'admin-1' });
+
+    expect(chosen.update).toHaveBeenCalledWith({ status: 'connected' });
+    expect(view.replaced).toEqual([{ id: 'acc-loser', display_name: 'Second Page' }]);
+    expect(loser.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'revoked', revoked_by: 'admin-1' }));
+    // A revoked account must not leave a usable token behind it.
+    expect(mockCredential.destroy).toHaveBeenCalledWith({ where: { channel_account_id: 'acc-loser' } });
+  });
+
+  it('scopes the query by tenant, so a wrong tenant reads as a wrong id', async () => {
+    mockAccount.findOne.mockResolvedValue(null);
+    await expect(selectAccount({ tenantId: TENANT, accountId: 'acc-x' })).rejects.toThrow(WorkflowError);
+    expect(mockAccount.findOne.mock.calls[0][0].where).toEqual({ id: 'acc-x', tenant_id: TENANT });
+  });
+
+  it('refuses an account that was already disconnected, rather than resurrecting one with no token', async () => {
+    mockAccount.findOne.mockResolvedValue(fakeAccount({ status: 'revoked', revoked_at: new Date() }));
+    await expect(selectAccount({ tenantId: TENANT, accountId: 'acc-1' })).rejects.toThrow(/disconnected/i);
+  });
+
+  it('is idempotent: selecting the one already connected re-applies the rule and changes nothing else', async () => {
+    const already = fakeAccount({ id: 'acc-1', status: 'connected' });
+    mockAccount.findOne.mockResolvedValue(already);
+    mockAccount.findAll.mockResolvedValue([]);
+
+    const view = await selectAccount({ tenantId: TENANT, accountId: 'acc-1' });
+
+    expect(already.update).not.toHaveBeenCalled();
+    expect(view.replaced).toBeUndefined();
   });
 });

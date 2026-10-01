@@ -27,12 +27,13 @@ jest.mock('remark-gfm', () => ({ __esModule: true, default: () => {} }));
 // this comment update since it was previously (correctly, at the time)
 // stated as inbox-independent.
 
-jest.mock('../../../services/agentDetailApi', () => ({ getAgentDetail: jest.fn(), setReeseBehaviourSwitch: jest.fn() }));
+jest.mock('../../../services/agentDetailApi', () => ({ getAgentDetail: jest.fn(), setReeseBehaviourSwitch: jest.fn(), setAgentAbacOverride: jest.fn(), setAgentReportsTo: jest.fn() }));
 jest.mock('../../../services/managerInboxApi', () => ({ getManagerInboxItems: jest.fn(), approveInboxItem: jest.fn(), getInboxItemInspector: jest.fn() }));
 jest.mock('../../../services/ticketSummaryApi', () => ({ getTicketSummary: jest.fn() }));
 jest.mock('../../../services/workforceOrgChartApi', () => ({
   resetAgents: jest.fn(),
   reactivateAgent: jest.fn(),
+  getOrgChart: jest.fn(),
   AUTONOMY_LEVELS: ['observe', 'suggest', 'act_audited', 'communicate'],
   AUTONOMY_LEVEL_DESCRIPTIONS: {
     observe: 'Read only.', suggest: 'May propose actions.', act_audited: 'May write, audited.', communicate: 'May send outbound comms.',
@@ -71,6 +72,7 @@ const DETAIL: AgentDetail = {
     max_runs_per_hour: 60, max_writes_per_execution: 100, max_proposals_per_run: 50,
     autonomy_level_set_at: null,
     autonomy_level_source: null,
+    reports_to_type: null, reports_to_id: null,
     abac_mode_override: null,
     abac_mode_override_set_at: null,
     abac_mode_override_set_by: null,

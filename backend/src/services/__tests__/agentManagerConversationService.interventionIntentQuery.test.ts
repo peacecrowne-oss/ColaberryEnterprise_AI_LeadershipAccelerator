@@ -85,7 +85,7 @@ jest.mock('../../models/AdminUser', () => ({
 const mockTicketFindAll = jest.fn();
 jest.mock('../../models/Ticket', () => ({
   __esModule: true,
-  default: { findAll: (...a: any[]) => mockTicketFindAll(...a) },
+  default: { findAll: (...a: any[]) => mockTicketFindAll(...a), findByPk: jest.fn() },
 }));
 
 const mockReeseOutreachFindAll = jest.fn();
@@ -99,6 +99,16 @@ jest.mock('../../models/Enrollment', () => ({
   __esModule: true,
   default: { findAll: (...a: any[]) => mockEnrollmentFindAll(...a) },
 }));
+
+// Reese manager-directed growth mission, Phase 2 (2026-09-30) — same isolation reasoning as
+// every mock above: agentManagerConversationService.ts now imports summaryGeneratorService.ts
+// (focused-case retrieval), which itself imports the '../../models' barrel, triggering the
+// full association graph. This file only needs "no focused case" for its own unrelated test
+// messages — real focused-case behavior is agentManagerConversationService.focusedCase.test.ts's job.
+jest.mock('../agentBlueprint/legacyCreatorAliases', () => ({ buildCreatorIdMatchList: jest.fn(() => []) }));
+jest.mock('../workLedger/summaryGeneratorService', () => ({ generateTicketSummary: jest.fn() }));
+jest.mock('../evidence/evidenceService', () => ({ getEvidenceForTicket: jest.fn() }));
+jest.mock('../evidence/decisionRecordService', () => ({ getDecisionsForTicket: jest.fn() }));
 
 import { getInstrumentedOpenAI } from '../openaiInstrumented';
 import { sendManagerMessage } from '../agentManagerConversationService';

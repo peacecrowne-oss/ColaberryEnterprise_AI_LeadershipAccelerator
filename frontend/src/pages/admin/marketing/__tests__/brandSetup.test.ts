@@ -1,4 +1,4 @@
-import { BRAND_TABS, isBrandTab, setupSteps, setupSummary, type BrandSetupFacts } from '../brandSetup';
+import { BRAND_TABS, domainNotice, isBrandTab, setupSteps, setupSummary, type BrandSetupFacts } from '../brandSetup';
 
 /**
  * "Is this brand set up?" as a tested function.
@@ -31,22 +31,48 @@ describe('what a brand still needs', () => {
     expect(setupSummary(facts).text).toMatch(/fix the connection/);
   });
 
-  it('an unverified domain is outstanding; a verified one is not', () => {
-    expect(setupSteps({ ...READY, verifiedDomainCount: 0 }).find((s) => s.key === 'domain')!.done).toBe(false);
-    expect(setupSteps(READY).find((s) => s.key === 'domain')!.done).toBe(true);
+  it('never asks anyone to verify a domain, because nothing in the platform can', () => {
+    // There is no route that creates or verifies a domain and no DNS check anywhere, so every
+    // domain reads "pending" for ever. A checklist item nobody can complete is worse than none:
+    // it makes a working brand read as unfinished and sends the operator looking for a button
+    // that does not exist.
+    expect(setupSteps({ ...READY, verifiedDomainCount: 0 }).some((s) => s.key === 'domain')).toBe(false);
+    expect(setupSummary({ ...READY, verifiedDomainCount: 0, domainCount: 2 }).done).toBe(true);
   });
 
-  it('readiness that has not loaded is not counted as a missing domain', () => {
-    // Null means "not loaded". Treating it as absence would tell someone to go and fix
-    // something that may already be fine.
-    expect(setupSteps({ ...READY, domainCount: null, verifiedDomainCount: 0 }).find((s) => s.key === 'domain')!.done).toBe(true);
+  it('and does not claim a verified domain in the finished line', () => {
+    expect(setupSummary(READY).text).not.toMatch(/verified sending domain/);
   });
 
   it('counts several outstanding things and leads with the first', () => {
-    const facts = { ...READY, channelCount: 0, verifiedDomainCount: 0 };
+    const facts = { ...READY, channelCount: 0, channelsNeedingAttention: 1 };
     const summary = setupSummary(facts);
     expect(summary.done).toBe(false);
     expect(summary.text).toMatch(/^2 things left, starting with: connect a network/);
+  });
+});
+
+describe('what the Domains tab admits', () => {
+  it('says the domains cannot be added, edited or verified here, and why', () => {
+    const notice = domainNotice({ ...READY, domainCount: 2 });
+    expect(notice.text).toMatch(/2 sending domains are recorded/);
+    expect(notice.text).toMatch(/cannot be added, edited or verified here/);
+    expect(notice.text).toMatch(/nothing in the platform checks DNS yet/);
+  });
+
+  it('scopes the bad news: social publishing does not use domains', () => {
+    // Otherwise this reads as "publishing is blocked", which would be false and alarming.
+    expect(domainNotice(READY).text).toMatch(/Social publishing is unaffected/);
+  });
+
+  it('counts one domain in the singular', () => {
+    expect(domainNotice({ ...READY, domainCount: 1 }).text).toMatch(/^1 sending domain is recorded/);
+  });
+
+  it('readiness that has not loaded says so, rather than reporting zero domains', () => {
+    const notice = domainNotice({ ...READY, domainCount: null });
+    expect(notice.text).toBe('Send readiness has not loaded yet.');
+    expect(notice.tone).toBe('info');
   });
 });
 

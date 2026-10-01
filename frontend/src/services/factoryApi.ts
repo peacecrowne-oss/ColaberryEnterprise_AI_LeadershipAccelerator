@@ -163,6 +163,11 @@ export interface GovOpportunity {
   /** true => the verdict field was returned (even if null); false => absent. null verdict = unassessed. */
   vetVerdictPresent?: boolean;
   freshness?: { enrichedAt: string | null; attachmentsFetchedAt: string | null } | null;
+  /**
+   * OP's PRELIMINARY, UNVERIFIED project blurb (from overview/strategy), display-only in the Details popup. Shown
+   * labeled "preliminary, unverified — not confirmed requirements"; NEVER a requirement. null when none supplied.
+   */
+  preliminarySummary?: string | null;
 }
 export type SnapshotReason = 'not_configured' | 'source_failed';
 export interface GovOpportunityFeed {
@@ -172,12 +177,46 @@ export interface GovOpportunityFeed {
   snapshotDate: string | null;
   /** When snapshot: 'not_configured' (dark) vs 'source_failed' (configured feed that errored). */
   snapshotReason?: SnapshotReason | null;
+  /** How many the source reported in total (best-fit caps ~50); null when unknown. Used for "showing N of M". */
+  totalAvailable?: number | null;
+  /** How many returned rows were hidden by active team dismissals this request; 0 if none. */
+  dismissedCount?: number | null;
 }
 export interface StartOpportunityResult { deliveryProjectId: string; created: boolean; }
 
 /** The discovered government candidates (live from Opportunity Pulse, or the labeled snapshot). */
 export async function listGovOpportunities(): Promise<GovOpportunityFeed> {
   const { data } = await api.get<GovOpportunityFeed>('/api/admin/factory/opportunities');
+  return data;
+}
+
+/** A persisted team dismissal row (one per tenant+opportunity). restoredAt null => active (hidden). */
+export interface GovOpportunityDismissal {
+  opportunity_key: string;
+  title?: string | null;
+  agency?: string | null;
+  reason?: string | null;
+  dismissed_by?: string | null;
+  dismissed_at?: string | null;
+  restored_at?: string | null;
+}
+
+/** Hide a discovered candidate from the WHOLE team's feed (reversible). Idempotent; keyed on OP's stable uuid. */
+export async function dismissGovOpportunity(
+  key: string,
+  body: { reason?: string; title?: string; agency?: string } = {},
+): Promise<{ dismissed: GovOpportunityDismissal }> {
+  const { data } = await api.post<{ dismissed: GovOpportunityDismissal }>(
+    `/api/admin/factory/opportunities/${encodeURIComponent(key)}/dismiss`, body,
+  );
+  return data;
+}
+
+/** Un-hide a previously dismissed candidate (recovery). Idempotent. */
+export async function restoreGovOpportunity(key: string): Promise<{ restored: GovOpportunityDismissal | null }> {
+  const { data } = await api.post<{ restored: GovOpportunityDismissal | null }>(
+    `/api/admin/factory/opportunities/${encodeURIComponent(key)}/restore`, {},
+  );
   return data;
 }
 

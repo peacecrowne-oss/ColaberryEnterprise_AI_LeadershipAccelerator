@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { sendManagerMessageInputSchema } from '../schemas/agentManagerConversationSchema';
-import { getConversationHistory, sendManagerMessage, AgentNotFoundError } from '../services/agentManagerConversationService';
+import { getConversationHistory, sendManagerMessage, AgentNotFoundError, TicketNotAccessibleError } from '../services/agentManagerConversationService';
 
 // AI Workforce Management, Checkpoint C — requireAgentManagerOrAdmin-gated
 // (route layer), same 500-on-unexpected-failure / never-a-raw-stack-trace
@@ -40,14 +40,14 @@ export async function handleSendManagerMessage(req: Request, res: Response) {
       return;
     }
     const input = sendManagerMessageInputSchema.parse(req.body || {});
-    const view = await sendManagerMessage(id, req.admin!.email, req.agentManagerOrgMemberId ?? null, input.message);
+    const view = await sendManagerMessage(id, req.admin!.email, req.agentManagerOrgMemberId ?? null, input.message, input.ticket_id ?? null);
     res.status(201).json(view);
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ error: 'Invalid input', issues: err.issues });
       return;
     }
-    if (err instanceof AgentNotFoundError) {
+    if (err instanceof AgentNotFoundError || err instanceof TicketNotAccessibleError) {
       res.status(err.status).json({ error: err.message });
       return;
     }

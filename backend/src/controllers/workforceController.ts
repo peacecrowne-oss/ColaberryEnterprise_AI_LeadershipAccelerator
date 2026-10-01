@@ -22,6 +22,7 @@ import { assignTaskToAgent } from '../services/workforce/orgChartTaskAssignmentS
 import { resetAgents } from '../services/workforce/agentResetService';
 import { reactivateAgent, AUTONOMY_LEVELS } from '../services/workforce/agentReactivationService';
 import { setAgentAbacOverride, ABAC_OVERRIDE_VALUES } from '../services/workforce/agentAbacOverrideService';
+import { setAgentReportsTo } from '../services/workforce/agentReportsToService';
 import { checkWireContract } from '../utils/responseContract';
 
 function fail(res: Response, err: any, next: NextFunction) {
@@ -266,6 +267,27 @@ export async function handleSetAgentAbacOverride(req: Request, res: Response, ne
     const parsed = setAbacOverrideSchema.parse(req.body || {});
     const actorId = req.admin?.email || req.admin?.sub || 'unknown-admin';
     const result = await setAgentAbacOverride(String(req.params.id), parsed.override, actorId);
+    res.json({ result });
+  } catch (e) { fail(res, e, next); }
+}
+
+/**
+ * Reports-to editor (2026-09-30). `reports_to_type`/`reports_to_id` are both required —
+ * unlike the ABAC override, this write deliberately has no "clear it" mode: every AI
+ * employee must have exactly one direct accountable human in its reports-to chain. See
+ * agentReportsToService.ts for the real mechanism, including the pre-persist chain
+ * validation.
+ */
+const setReportsToSchema = z.object({
+  reports_to_type: z.enum(['human', 'agent']),
+  reports_to_id: z.string().uuid(),
+});
+export async function handleSetAgentReportsTo(req: Request, res: Response, next: NextFunction) {
+  try {
+    const parsed = setReportsToSchema.parse(req.body || {});
+    const actorId = req.admin?.email || req.admin?.sub || 'unknown-admin';
+    const result = await setAgentReportsTo(String(req.params.id), parsed.reports_to_type, parsed.reports_to_id, actorId);
+    if (!result.updated) return res.status(400).json({ error: result.error || 'Failed to update reports-to' });
     res.json({ result });
   } catch (e) { fail(res, e, next); }
 }

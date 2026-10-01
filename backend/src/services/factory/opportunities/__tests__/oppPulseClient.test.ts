@@ -62,6 +62,24 @@ describe('fetchBestFitOpportunities — degrade-dark', () => {
     expect((fetchMock.mock.calls[0][1] as any).headers['X-API-Key']).toBe('op_testkey');
   });
 
+  it('uses the default best-fit path at limit=50 when no list path is configured, and reads totalAvailable from pagination', async () => {
+    process.env.OPPORTUNITY_PULSE_BASE = 'https://op.test';
+    process.env.OPPORTUNITY_PULSE_API_KEY = 'op_testkey';
+    // deliberately NO OPPORTUNITY_PULSE_LIST_PATH → exercises the default
+    fetchMock.mockResolvedValueOnce(res(true, { data: [{ id: 'u1', title: 'A' }, { id: 'u2', title: 'B' }], pagination: { total: 42, limit: 50, offset: 0 } }));
+    const feed = await fetchBestFitOpportunities();
+    expect(feed.source).toBe('live');
+    expect(feed.totalAvailable).toBe(42); // the full curated set size, not the page length
+    expect(fetchMock.mock.calls[0][0]).toBe('https://op.test/api/v1/bonfire/best-fit?limit=50');
+  });
+
+  it('falls back totalAvailable to the returned row count when OP omits pagination.total', async () => {
+    configure();
+    fetchMock.mockResolvedValueOnce(res(true, { data: [{ id: 'u1', title: 'A' }, { id: 'u2', title: 'B' }] }));
+    const feed = await fetchBestFitOpportunities();
+    expect(feed.totalAvailable).toBe(2);
+  });
+
   it('degrades to the snapshot with reason source_failed on a 404 (a CONFIGURED feed that FAILED, not "not configured")', async () => {
     configure();
     fetchMock.mockResolvedValueOnce(res(false, {}, 404));
@@ -161,5 +179,36 @@ describe('mapOpportunity', () => {
   it('tags a live value as unverified provenance and null-fills an empty/absent value', () => {
     expect(mapOpportunity({ uuid: 'u', title: 't', estimatedValue: '100000000' })).toMatchObject({ estimatedValue: 1000000, valueBasis: 'unverified' });
     expect(mapOpportunity({ uuid: 'u', title: 't', estimatedValue: '' })).toMatchObject({ estimatedValue: null, valueBasis: null });
+  });
+
+  // ── preliminarySummary: a LABELED, display-only, unverified blurb — never a confirmed requirement ──
+  it('forwards overview as preliminarySummary, preferring overview > strategy > summary', () => {
+    expect(mapOpportunity({ id: 'a', title: 't', overview: 'An evidence platform modernization.' })!.preliminarySummary)
+      .toBe('An evidence platform modernization.');
+    // strategy used only when overview is absent; summary only when both absent
+    expect(mapOpportunity({ id: 'b', title: 't', strategy: 'Strategy text.' })!.preliminarySummary).toBe('Strategy text.');
+    expect(mapOpportunity({ id: 'c', title: 't', summary: 'Summary text.' })!.preliminarySummary).toBe('Summary text.');
+    expect(mapOpportunity({ id: 'd', title: 't', overview: 'O', strategy: 'S', summary: 'U' })!.preliminarySummary).toBe('O');
+  });
+  it('null-fills preliminarySummary when absent, empty, or a non-string (never String()-coerced)', () => {
+    expect(mapOpportunity({ id: 'a', title: 't' })!.preliminarySummary).toBeNull();
+    expect(mapOpportunity({ id: 'b', title: 't', overview: '   ' })!.preliminarySummary).toBeNull();
+    expect(mapOpportunity({ id: 'c', title: 't', overview: { leak: 1 } })!.preliminarySummary).toBeNull();
+    expect(mapOpportunity({ id: 'd', title: 't', overview: ['x'] })!.preliminarySummary).toBeNull();
+    expect(mapOpportunity({ id: 'e', title: 't', overview: 42 })!.preliminarySummary).toBeNull();
+  });
+  it('hard-caps a huge preliminarySummary so an upstream blob cannot bloat the payload', () => {
+    const huge = 'x'.repeat(5000);
+    const out = mapOpportunity({ id: 'a', title: 't', overview: huge })!.preliminarySummary!;
+    expect(out.length).toBeLessThanOrEqual(2000);
+    expect(out.endsWith('…')).toBe(true);
+  });
+  it('NEVER places the preliminary summary into any requirements structure (honesty rail)', () => {
+    const o = mapOpportunity({ id: 'a', title: 't', overview: 'blurb', requirements: ['should not appear'] })! as any;
+    // the mapped allowlist carries no requirements field at all; the blurb lives only in preliminarySummary
+    expect(o.requirements).toBeUndefined();
+    expect(o.requirements_json).toBeUndefined();
+    expect(o.established).toBeUndefined();
+    expect(o.preliminarySummary).toBe('blurb');
   });
 });
