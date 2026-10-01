@@ -11,12 +11,7 @@ import {
   sendIntakeTurn,
 } from '../../../services/adminFlotationIntakeApi';
 import { getViewAsUrl } from '../../../services/adminOrgApi';
-import {
-  InternProjectBuildView,
-  assignProject,
-  internProjectBuildByProject,
-} from '../../../services/adminInternshipApi';
-import RequirementCoveragePanel from '../../../pages/admin/components/RequirementCoveragePanel';
+import ProjectPlanReview from './ProjectPlanReview';
 import SpokenIntake from './SpokenIntake';
 import { readActiveIntake, clearActiveIntake } from './flotationIntakeSession';
 
@@ -98,74 +93,9 @@ export default function StartProjectForStudent({ startFor, onConsumed }: {
   const [docError, setDocError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  /**
-   * The plan this conversation produced, and whether it can be assigned.
-   *
-   *     "We will never build projects like this, one story at a time. We do not create
-   *      manually. This is where I need to put my idea process in here. The same process
-   *      that already exists for creating projects."  (Ali, 2026-09-29)
-   *
-   * This door HOLDS the build, so the conversation no longer ends at "it is building".
-   * It ends here, at the plan, with the same gate split and coverage report the form
-   * intake had - which is the point of consolidating rather than rebuilding: the review is
-   * already written and already the server's.
-   */
-  const [review, setReview] = useState<InternProjectBuildView | null>(null);
-  const [reviewError, setReviewError] = useState<string | null>(null);
-  const [assigning, setAssigning] = useState(false);
-
+  // The plan this conversation produced. The review itself lives in ProjectPlanReview,
+  // shared with the enquiry list, so both admin surfaces show one thing rather than two.
   const builtProjectId = finished?.build?.started ? finished.build.project_id ?? null : null;
-
-  // Poll while it generates, then stop. A held plan rests at `drafted`, which is a
-  // terminal state here rather than a failure - see the SBP runbook: `drafted` means the
-  // plan is good and something chose not to publish it, and here that something is us.
-  useEffect(() => {
-    if (!builtProjectId) return undefined;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const look = async () => {
-      try {
-        const view = await internProjectBuildByProject(builtProjectId);
-        if (!live) return;
-        setReview(view);
-        setReviewError(null);
-        if (view.status === 'generating' || view.status === null) {
-          timer = setTimeout(() => void look(), 5000);
-        }
-      } catch (err) {
-        if (!live) return;
-        setReviewError(describeBuildError(err));
-        // Slower on failure: a plan that cannot be read is not going to become readable
-        // by asking harder.
-        timer = setTimeout(() => void look(), 15000);
-      }
-    };
-    void look();
-
-    return () => { live = false; if (timer) clearTimeout(timer); };
-  }, [builtProjectId]);
-
-  /**
-   * The reviewer says yes.
-   *
-   * `expected_sha256` is the hash of the plan actually on screen. `publishPlan` refuses on
-   * a mismatch, so a regeneration between reading and assigning cannot ship a plan nobody
-   * reviewed - the failure that parameter was added for.
-   */
-  const assign = async () => {
-    if (!review || assigning) return;
-    setAssigning(true);
-    setReviewError(null);
-    try {
-      await assignProject(review.project_id, { expected_sha256: review.plan_sha256 });
-      setReview(await internProjectBuildByProject(review.project_id));
-    } catch (err) {
-      setReviewError(describeBuildError(err));
-    } finally {
-      setAssigning(false);
-    }
-  };
 
   // Search as they type, after a pause, from two characters - the server refuses less.
   useEffect(() => {
@@ -266,8 +196,6 @@ export default function StartProjectForStudent({ startFor, onConsumed }: {
     setError(null);
     setDocuments([]);
     setDocError(null);
-    setReview(null);
-    setReviewError(null);
     setFinished(null);
   };
 
@@ -498,119 +426,15 @@ export default function StartProjectForStudent({ startFor, onConsumed }: {
                 )}
               </p>
 
-              {reviewError && <p className="text-danger small">{reviewError}</p>}
-
-              {builtProjectId && !review && !reviewError && (
-                <div className="d-flex align-items-center gap-2 small mb-2">
-                  <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
-                  <span>Reading the plan…</span>
+              {builtProjectId && (
+                <div className="mb-2">
+                  <ProjectPlanReview projectId={builtProjectId} personName={student.full_name} />
                 </div>
               )}
 
-              {review && (
-                <div className="d-flex flex-column gap-2 mb-2">
-                  {review.status === 'generating' && (
-                    <div className="d-flex align-items-center gap-2" style={{ fontSize: 13 }}>
-                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
-                      <span>Generating. A minute or two, and nothing is visible to them yet.</span>
-                    </div>
-                  )}
-
-                  {review.status === 'failed' && (
-                    <div className="alert alert-danger py-2 mb-0" role="alert" style={{ fontSize: 13 }}>
-                      Generation failed. Nothing was assigned; have the conversation again with more in it.
-                    </div>
-                  )}
-
-                  {review.blocking.length > 0 && (
-                    <div className="alert alert-warning py-2 mb-0" role="alert" style={{ fontSize: 12.5 }}>
-                      <strong>This plan cannot be assigned yet.</strong>
-                      <ul className="mb-0 mt-1" style={{ paddingLeft: 18 }}>
-                        {review.blocking.map((v, i) => <li key={`${v.rule}-${i}`}>{v.message}</li>)}
-                      </ul>
-                      <div className="mt-1">Usually the brief is thin. Start again and say more in the conversation.</div>
-                    </div>
-                  )}
-
-                  {review.plan && (
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 700 }}>{review.plan.project_name}</div>
-                      <div className="text-muted mb-2" style={{ fontSize: 12.5 }}>
-                        {review.plan.descriptor} · {review.plan.requirements.length} requirements
-                        · {review.plan.releases.length} releases · {review.plan.stories.length} stories
-                        {review.version ? ` · v${review.version}` : ''}
-                      </div>
-                      <div className="d-flex flex-column gap-2">
-                        {review.plan.releases.map((rel) => {
-                          const stories = review.plan!.stories.filter((s) => s.release === rel.key);
-                          return (
-                            <div key={rel.key} style={{ border: '1px solid #e9ecef', borderRadius: 6, padding: '8px 10px' }}>
-                              <div style={{ fontSize: 13, fontWeight: 600 }}>
-                                {rel.name}
-                                <span className="text-muted" style={{ fontWeight: 400 }}>
-                                  {' '}· {stories.length} stories · weeks {rel.week_start}-{rel.week_end}
-                                </span>
-                              </div>
-                              {rel.goal && <div className="text-muted" style={{ fontSize: 12 }}>{rel.goal}</div>}
-                              <ul className="mb-0 mt-1" style={{ paddingLeft: 18, fontSize: 12.5 }}>
-                                {stories.map((s) => (
-                                  <li key={s.id}><span style={{ fontWeight: 600 }}>{s.id}</span> {s.title}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {review.advisory.length > 0 && (
-                    <details style={{ fontSize: 12.5 }}>
-                      <summary className="text-muted">
-                        {review.advisory.length} advisory note(s) — these do not stop an assignment
-                      </summary>
-                      <ul className="mb-0 mt-1" style={{ paddingLeft: 18 }}>
-                        {review.advisory.map((v, i) => <li key={`${v.rule}-${i}`}>{v.message}</li>)}
-                      </ul>
-                    </details>
-                  )}
-
-                  {/* Every project built this way came from a recorded conversation, so the
-                      comparison always has something to compare against - which is more than
-                      was true of the form intake this replaces. */}
-                  {review.coverage && (
-                    <RequirementCoveragePanel coverage={review.coverage} summary={review.coverage_summary} />
-                  )}
-                </div>
-              )}
-
-              <div className="d-flex align-items-center gap-2 flex-wrap">
-                {review && (
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-success"
-                    disabled={
-                      assigning
-                      || review.assigned
-                      || review.status === 'generating'
-                      || review.blocking.length > 0
-                      || !review.plan
-                    }
-                    onClick={() => void assign()}
-                  >
-                    {assigning ? 'Assigning…' : review.assigned ? 'Assigned' : `Assign to ${student.full_name || 'them'}`}
-                  </button>
-                )}
-                <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void viewAs()}>
-                  <i className="ri-eye-line me-1" />See it as they would
-                </button>
-              </div>
-
-              {review?.assigned && (
-                <p className="text-success small mb-0 mt-2">
-                  Published and materialised. It is on their Projects page now.
-                </p>
-              )}
+              <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void viewAs()}>
+                <i className="ri-eye-line me-1" />See it as they would
+              </button>
             </div>
           )}
           </>

@@ -53,6 +53,8 @@ interface ProjectRow {
   cohort_name: string | null;
   stage: string;
   maturity_score: number | null;
+  /** The owner holds an active internship. Shown, not filtered on — see `internsFirst`. */
+  is_intern: boolean;
   has_repo: boolean;
   repo_url: string | null;
   /** The student's Command Center — a GitHub Pages site at the root of their own repo.
@@ -120,11 +122,23 @@ interface Props {
    * quietly return nothing.
    */
   internsOnly?: boolean;
+  /**
+   * Show EVERY project, interns first.
+   *
+   *     "All projects built moving fwd should be assigned to an intern above or shown
+   *      below with drill down. Either way, I should be able to drill down into the
+   *      projects."  (Ali, 2026-09-30)
+   *
+   * `internsOnly` answered that by hiding the rest, so a project built for a prospect
+   * from the enquiry list was absent from the board rather than merely lower down it.
+   * This orders instead of excluding.
+   */
+  internsFirst?: boolean;
   /** Hide the "enrolled with no project" panel where it is not the point. */
   hideWithoutProject?: boolean;
 }
 
-export default function ProjectDeliveryView({ cohortId, internsOnly, hideWithoutProject }: Props) {
+export default function ProjectDeliveryView({ cohortId, internsOnly, internsFirst, hideWithoutProject }: Props) {
   const [rows, setRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -212,8 +226,14 @@ export default function ProjectDeliveryView({ cohortId, internsOnly, hideWithout
   };
 
   const visible = useMemo(
-    () => sortRows(onlyOverdue ? rows.filter((r) => r.tasks_overdue > 0) : rows, sortMode),
-    [rows, onlyOverdue, sortMode]
+    () => {
+      const sorted = sortRows(onlyOverdue ? rows.filter((r) => r.tasks_overdue > 0) : rows, sortMode);
+      if (!internsFirst) return sorted;
+      // Stable partition, so the chosen sort still decides the order WITHIN each
+      // group and the toggle keeps meaning what it says.
+      return [...sorted.filter((r) => r.is_intern), ...sorted.filter((r) => !r.is_intern)];
+    },
+    [rows, onlyOverdue, sortMode, internsFirst]
   );
 
   const totals = useMemo(() => ({
@@ -310,6 +330,21 @@ export default function ProjectDeliveryView({ cohortId, internsOnly, hideWithout
                 <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
                   {r.student_name || '—'}{r.cohort_name ? ` · ${r.cohort_name}` : ''}
                 </span>
+                {/* Only on the boards that mix the two. Marking every intern on an
+                    all-intern board is a badge that carries no information. */}
+                {internsFirst && !r.is_intern && (
+                  <span
+                    className="ms-2"
+                    style={{
+                      fontSize: 10.5, fontWeight: 600, letterSpacing: '.03em',
+                      color: 'var(--text-muted)', border: '1px solid var(--border-subtle, #dee2e6)',
+                      borderRadius: 3, padding: '0 5px', textTransform: 'uppercase',
+                    }}
+                    title="This project's owner does not hold an active internship"
+                  >
+                    not an intern
+                  </span>
+                )}
                 <RiskPill risk={r.risk} />
                 {/* Both are public URLs the platform already stores, and each renders only
                     when detected so a row never shows a link that goes nowhere.

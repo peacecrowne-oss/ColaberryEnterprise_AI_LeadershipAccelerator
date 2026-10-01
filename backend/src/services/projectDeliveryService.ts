@@ -69,6 +69,11 @@ export interface ProjectRow {
   cohort_name: string | null;
   stage: ProjectStage;
   maturity_score: number | null;
+  /**
+   * The owner holds an active internship. A column rather than a filter, so a board can
+   * put interns first and still show everyone — see the query for why that matters.
+   */
+  is_intern: boolean;
   has_repo: boolean;
   repo_url: string | null;
   /** Which store answered: 'connection' (the record), 'project_column' (legacy
@@ -255,7 +260,28 @@ export async function getProjectDelivery(
             END                 AS repo_source,
             p.project_variables->>'command_center_url' AS command_center_url,
             p.archived_at,
-            (p.executive_summary IS NOT NULL AND p.executive_summary <> '') AS has_exec_summary
+            (p.executive_summary IS NOT NULL AND p.executive_summary <> '') AS has_exec_summary,
+            -- Whether this project's owner holds an internship, as a COLUMN rather than
+            -- only as a filter.
+            --
+            --     "All projects built moving fwd should be assigned to an intern above or
+            --      shown below with drill down. Either way, I should be able to drill down
+            --      into the projects."  (Ali, 2026-09-30)
+            --
+            -- The internsOnly filter answered that question by making the other projects
+            -- vanish, so a project built for a prospect from the enquiry list was not
+            -- merely unsorted on the internship board, it was absent. Same predicate,
+            -- selected instead of filtered, so a caller can order by it and still show
+            -- everything. (No backticks in here: this is inside a template literal, and
+            -- one would end the string - it has already happened once in this repo.)
+            EXISTS (
+              SELECT 1 FROM cohort_memberships m
+                JOIN cohorts ic ON ic.id = m.cohort_id
+               WHERE m.enrollment_id = p.enrollment_id
+                 AND m.membership_type = 'internship'
+                 AND m.status = 'active'
+                 AND ic.cohort_type = 'ai_internship'
+            )                   AS is_intern
        FROM projects p
        LEFT JOIN enrollments e ON e.id = p.enrollment_id
        LEFT JOIN cohorts co    ON co.id = e.cohort_id
@@ -344,6 +370,7 @@ export async function getProjectDelivery(
       cohort_name: r.cohort_name,
       stage,
       maturity_score: r.maturity_score,
+      is_intern: !!r.is_intern,
       has_repo,
       repo_url: has_repo ? r.repo_url : null,
       repo_source: has_repo ? (r.repo_source as 'connection' | 'project_column') : 'none',

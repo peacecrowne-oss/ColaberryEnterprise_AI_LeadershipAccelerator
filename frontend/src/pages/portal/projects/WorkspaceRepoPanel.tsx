@@ -94,9 +94,26 @@ const ErrorNote: React.FC<{ err: ConnectApiError; onConfirmReplace?: () => void 
   </div>
 );
 
+/**
+ * Where this repo is up to, from the workspace view the page already holds.
+ *
+ * Exported because the acceptance checklist needs the same answer to decide
+ * whether "open `.colaberry/progress.json` in your repo" is an instruction a
+ * student can actually follow. Two copies of this expression would be two
+ * chances for the checklist to promise a file while the panel below it is
+ * still offering to connect the repo that would contain it — so there is one,
+ * and both read it. `connect.state` wins when present; `repo.connected` is the
+ * fallback for a view fetched before the connect state existed; and no repo at
+ * all is `not_connected`, which is also what an unloaded page reports, matching
+ * the panel's own render.
+ */
+export function repoConnectionState(repo: WorkspaceRepoView | null | undefined): string {
+  return repo?.connect?.state ?? (repo?.connected ? 'connected' : 'not_connected');
+}
+
 const WorkspaceRepoPanel: React.FC<Props> = ({ projectId, repo, onRepoChange, onConnectChange }) => {
   const connect = repo?.connect ?? null;
-  const state = connect?.state ?? (repo?.connected ? 'connected' : 'not_connected');
+  const state = repoConnectionState(repo);
 
   const [refInput, setRefInput] = useState('');
   const refTouched = useRef(false);

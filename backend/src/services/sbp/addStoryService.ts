@@ -106,6 +106,68 @@ export interface StoryRevision {
   requirement: PlanRequirement;
 }
 
+/**
+ * Where a student's own additions file in `docs/REQUIREMENTS.md`.
+ *
+ * The cluster used to be copied from `requirements[0]`, on the stated reasoning
+ * that it "becomes a task-list grouping" — it does not. `materializeTasks`
+ * keys its task lists on the RELEASE (`cluster: rel.key`), and the only reader
+ * of a requirement's cluster is `renderDocs`, which uses it as a heading in
+ * REQUIREMENTS.md. So the copy bought no grouping and cost accuracy: Swati
+ * Raman added four stories to the Stress Test Review App on 2026-09-29 and all
+ * four requirements filed under "Marker Detection", which is what
+ * `requirements[0]` happened to be and had nothing to do with any of them.
+ *
+ * Their own heading is both truthful and more useful — it is the list of what
+ * they decided the generated plan had missed.
+ */
+export const STUDENT_ADDED_CLUSTER = 'Student Additions';
+
+/**
+ * Turn the student's story into a REQUIREMENT statement.
+ *
+ * The statement used to be `input.title` verbatim, so a requirement read
+ * "Vector Store For Similar Reviews" — a feature name where every other
+ * requirement in the document is a sentence about what the system must do.
+ * That is not a formatting nit: REQUIREMENTS.md is the artifact a student
+ * shows an employer, and one section of bare noun phrases in a document of
+ * obligations reads as the part nobody finished.
+ *
+ * ── WHY THIS IS NOT A GENERAL REWRITER ──────────────────────────────────────
+ *
+ * There is no safe deterministic way to turn an arbitrary phrase into a
+ * "The system must ..." sentence, and a near-miss is worse than the noun
+ * phrase it replaced. "I want to export the roster" naively becomes "The
+ * system must to export the roster"; "I want uncertain data to be flagged"
+ * becomes "The system must uncertain data to be flagged". Both are real
+ * narratives from live builds.
+ *
+ * So exactly ONE shape is rewritten — `As a <role>, I want to <verb...>`,
+ * which is the dominant form and converts cleanly — and everything else falls
+ * back to the student's narrative VERBATIM. Both outcomes are complete
+ * sentences in the student's own words. Neither invents scope, and the bare
+ * noun phrase can no longer reach the document by any path.
+ */
+export function requirementStatementFor(input: { title: string; narrative?: string | null }): string {
+  const narrative = (input.narrative ?? '').trim();
+  if (!narrative) return input.title;
+
+  const role = /^As\s+(?:(an?|the)\s+)?([^,]+?)\s*,/i.exec(narrative);
+  const want = /\bI\s+want\s+to\s+(.+?)(?:\s*,?\s*so\s+that\b.*)?$/is.exec(narrative);
+  const capability = want?.[1]?.trim().replace(/[.\s]+$/, '');
+  if (!capability) return narrative;
+
+  const who = role?.[2]?.trim();
+  // When the student casts the SYSTEM as the actor — "As the review system, I
+  // want to recognise the markers" — "must let the review system recognise"
+  // is nonsense. The system does not grant itself permission.
+  const actorIsTheSystem = !who || /\b(system|platform|service|app|engine)\b/i.test(who);
+  if (actorIsTheSystem) return `The system must ${capability}.`;
+
+  const article = role?.[1] ?? (/^[aeiou]/i.test(who) ? 'an' : 'a');
+  return `The system must let ${article} ${who} ${capability}.`;
+}
+
 /** STORY-016 after STORY-015; REQ-023 after REQ-022. Never reuses a number. */
 function nextId(prefix: 'STORY' | 'REQ', ids: string[]): string {
   const re = new RegExp(`^${prefix}-(\\d+)$`, 'i');
@@ -201,17 +263,12 @@ export function buildStoryRevision(plan: BuildPlan, input: AddStoryInput): Story
   const storyId = nextId('STORY', stories.map((s) => s.id));
   const requirementId = nextId('REQ', requirements.map((r) => r.id));
 
-  // The requirement's cluster becomes a task-list grouping. Borrow the first
-  // existing cluster so the new story files with the rest of the build rather
-  // than under a lone heading; a plan with no requirements gets a truthful one.
-  const cluster = requirements[0]?.cluster ?? 'student_added';
-
   const requirement: PlanRequirement = {
     id: requirementId,
-    statement: input.title,
+    statement: requirementStatementFor(input),
     kind: 'FUNC',
     priority: 'should',
-    cluster,
+    cluster: STUDENT_ADDED_CLUSTER,
   };
 
   const story: PlanStory = {

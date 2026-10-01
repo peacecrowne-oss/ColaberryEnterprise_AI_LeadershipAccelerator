@@ -33,6 +33,58 @@ export interface MaterializeResult {
   preservedComplete: number;
 }
 
+/** Due dates are days. A publish at 14:32 is not half a day late. */
+const startOfUtcDay = (d: Date) =>
+  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+
+/**
+ * The due date actually written for a story — never earlier than the day that
+ * story first appeared on the student's board.
+ *
+ * ── WHAT WENT WRONG ─────────────────────────────────────────────────────────
+ *
+ * `buildSchedule` spreads a release's stories evenly across that release's
+ * slice of the build window, by their position in the plan. That is right for
+ * a plan published once. It is wrong the moment a story is ADDED to a plan
+ * that is already running, because the new story takes a position in the
+ * sequence and is therefore dated by where it sits, not by when it arrived.
+ * Add a story to r1 in week 9 and it is dated to week 5 — born overdue, with
+ * a red date, before the student has read it.
+ *
+ * The same arithmetic moves the stories already there. Swati Raman added six
+ * stories on 2026-09-30; eleven of her existing twenty-three then recomputed
+ * EARLIER than the dates she had been working to, because the same window now
+ * had to hold more work. Nobody had slipped, and several deadlines moved
+ * toward her anyway.
+ *
+ * ── THE RULE ────────────────────────────────────────────────────────────────
+ *
+ * A due date may move later. It may not move earlier than the day the story
+ * first appeared, and a story appearing today cannot already be overdue:
+ *
+ *   new story       max(computed, today)     — never born late
+ *   existing story  max(computed, baseline)  — never pulled earlier than the
+ *                                              date it was first given
+ *
+ * Because a new story's floored date becomes its own `due_baseline_on`, the
+ * two collapse to one invariant: **`due_on >= due_baseline_on`, always.**
+ *
+ * This is deliberately one-directional. Taking on more work is allowed to push
+ * the finish line out; it must not quietly pull anyone's existing deadlines in.
+ * The cost is that a genuinely corrected cohort date cannot drag dates earlier
+ * either — that is a backfill, and a backfill should be a decision somebody
+ * makes on purpose rather than a side effect of a student adding a story.
+ */
+export function dueDateFloor(
+  computed: Date | null,
+  floor: Date | null | undefined,
+): Date | null {
+  if (!computed) return computed;
+  if (!floor) return computed;
+  const f = startOfUtcDay(new Date(floor));
+  return computed.getTime() < f.getTime() ? f : computed;
+}
+
 /**
  * Release gating: every story in r(n) waits on the LAST story of r(n-1), so a
  * student sees later releases visibly locked until the previous one lands.
@@ -69,6 +121,11 @@ export async function materializePlanAsTasks(
      * has no start date on it.
      */
     schedule?: Schedule | null;
+    /**
+     * "Today", for the never-born-overdue floor. Injected so the rule is
+     * reproducible in a test instead of depending on the day the suite runs.
+     */
+    now?: Date;
   } = {},
 ): Promise<MaterializeResult> {
   const ordered = [...plan.releases].sort((a, b) => a.key.localeCompare(b.key));
@@ -77,6 +134,7 @@ export async function materializePlanAsTasks(
   const dueByStory = new Map<string, Date>(
     (ctx.schedule?.tasks ?? []).map((t) => [t.storyId, t.dueOn]),
   );
+  const today = ctx.now ?? new Date();
 
   await sequelize.transaction(async (t: Transaction) => {
     let listPos = 0;
@@ -146,8 +204,12 @@ export async function materializePlanAsTasks(
         result.tasks += 1;
       }
       for (const story of inRel) {
+        const computedDue = dueByStory.get(story.id) ?? null;
+        // A story seen for the first time cannot already be overdue. See
+        // `dueDateFloor`: this floored value becomes its own baseline below,
+        // so the invariant `due_on >= due_baseline_on` holds from row one.
         const attrs = taskAttrs(projectId, list.id, story, plan, gates.get(story.id) ?? [], taskPos, ctx,
-          dueByStory.get(story.id) ?? null);
+          dueDateFloor(computedDue, today));
         taskPos += 1;
 
         const [row, created] = await StudentTask.findOrCreate({
@@ -162,8 +224,15 @@ export async function materializePlanAsTasks(
           // Republishing must never un-complete work a student has already done.
           const keepComplete = row.status === 'complete';
           if (keepComplete) result.preservedComplete += 1;
+          // ...nor quietly pull a deadline they were already working to
+          // earlier, which is what adding a story to a full window does to
+          // every story around it.
           await row.update(
-            { ...attrs, status: keepComplete ? 'complete' : row.status } as any,
+            {
+              ...attrs,
+              due_on: dueDateFloor(computedDue, (row as any).due_baseline_on ?? null),
+              status: keepComplete ? 'complete' : row.status,
+            } as any,
             { transaction: t },
           );
         }

@@ -17,7 +17,8 @@ export interface FlotationUnderstandingRow {
   confirmed_at: string | null;
   lead: { id: number; name: string | null; email: string; company: string | null } | null;
   enrollment: { id: string; tier: string; cohort_id: string | null } | null;
-  build: { project_id: string; started_at: string } | null;
+  /** `assigned` is the difference between a plan that exists and one they can see. */
+  build: { project_id: string; started_at: string; assigned: boolean } | null;
 }
 
 export interface StartedBuild {

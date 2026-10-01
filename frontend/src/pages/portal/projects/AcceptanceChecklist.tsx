@@ -76,15 +76,39 @@ export interface AcceptanceChecklistProps {
    * built by hand from the JSON block inside a story document, which carries
    * one story's criteria and can never confirm any other, silently. Those
    * students need the button that BUILDS the file first, and it is on this same
-   * page. `null` (a connection made before the permission was recorded, or no
-   * repo yet) takes the shorter push wording, which is true either way and
-   * names no control that might not be rendered.
+   * page. `null` (a connection made before the permission was recorded) takes
+   * the shorter push wording, which is true either way and names no control
+   * that might not be rendered.
    */
   writeAccess?: 'push' | 'pull_only' | null;
+  /**
+   * Is a repo actually connected to this project yet?
+   *
+   * WHY THIS IS SEPARATE FROM `writeAccess`: it was not, and that was the bug.
+   * A project with no repo at all reports `write_access: null`, which is the
+   * same value as a connection made before the permission was recorded — so
+   * both fell into the `push` branch and a student with nothing connected was
+   * told to "open `.colaberry/progress.json` in your repo, change that line
+   * ... commit and push". Every noun in that sentence is a thing they do not
+   * have. It is the same class of mistake as pointing STORY-000's Step 1 at a
+   * panel the page had not drawn (see ProjectWorkspacePage's note): an
+   * instruction is only honest if the thing it names is on the screen.
+   *
+   * Unconnected, the only true next step is connecting, so that is the only
+   * one named — and it is named as **Connect your project folder**, the
+   * heading WorkspaceRepoPanel actually renders in its not-connected branch,
+   * under "How to build it" on this same page. Defaults to `true` so the
+   * existing wording is what renders for every caller that has not been
+   * updated: the failure mode of this flag is telling a connected student
+   * something they already know, never telling an unconnected one to edit a
+   * file that does not exist.
+   */
+  repoConnected?: boolean;
 }
 
 const AcceptanceChecklist: React.FC<AcceptanceChecklistProps> = ({
   acceptance, stepNo, isConfirmed, isJustConfirmed, ticked, onToggle, writeAccess = null,
+  repoConnected = true,
 }) => {
   if (acceptance.length === 0) return null;
 
@@ -122,19 +146,30 @@ const AcceptanceChecklist: React.FC<AcceptanceChecklistProps> = ({
               confirm anything, and it does not send us anything.
             </p>
             <p>
-              The platform confirms each line itself, by reading your repo.{' '}
-              {writeAccess === 'pull_only' ? (
+              {!repoConnected ? (
                 <>
-                  To get a line confirmed, press <strong>Get my progress.json</strong> further down
-                  this page and save that file in your repo at <code>.colaberry/progress.json</code>.
-                  Then change that line from <code>false</code> to <code>true</code>, commit, and
-                  push.
+                  The platform confirms each line itself, by reading your repo — and this project
+                  has no repo connected yet, so nothing here can be confirmed. Connect one under{' '}
+                  <strong>Connect your project folder</strong> further down this page. Once it is
+                  connected, these lines start confirming themselves from what you push.
                 </>
               ) : (
                 <>
-                  To get a line confirmed, open <code>.colaberry/progress.json</code> in your repo,
-                  change that line from <code>false</code> to <code>true</code>, then commit and
-                  push.
+                  The platform confirms each line itself, by reading your repo.{' '}
+                  {writeAccess === 'pull_only' ? (
+                    <>
+                      To get a line confirmed, press <strong>Get my progress.json</strong> further
+                      down this page and save that file in your repo at{' '}
+                      <code>.colaberry/progress.json</code>. Then change that line from{' '}
+                      <code>false</code> to <code>true</code>, commit, and push.
+                    </>
+                  ) : (
+                    <>
+                      To get a line confirmed, open <code>.colaberry/progress.json</code> in your
+                      repo, change that line from <code>false</code> to <code>true</code>, then
+                      commit and push.
+                    </>
+                  )}
                 </>
               )}
             </p>

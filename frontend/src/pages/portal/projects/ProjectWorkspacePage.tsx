@@ -9,7 +9,7 @@ import {
 import {
   WorkspaceRepoView, ConnectStateView, getWorkspaceRepo,
 } from '../../../services/workspaceRepoApi';
-import WorkspaceRepoPanel from './WorkspaceRepoPanel';
+import WorkspaceRepoPanel, { repoConnectionState } from './WorkspaceRepoPanel';
 import { refreshProjectsFromBackend } from './projectSync';
 import { useStoryVerification } from './useStoryVerification';
 import AcceptanceChecklist from './AcceptanceChecklist';
@@ -387,7 +387,13 @@ const ProjectWorkspacePage: React.FC = () => {
               `writeAccess` is passed because it changes the INSTRUCTION: a
               pull-only student was never given a `.colaberry/progress.json`,
               so telling them to open theirs points at a file that may not
-              exist. See the prop's own note in AcceptanceChecklist. */}
+              exist. See the prop's own note in AcceptanceChecklist.
+              `repoConnected` is the same argument taken one step further: with
+              NO repo, every noun in that instruction is missing, not just the
+              file. It reads `repoConnectionState`, the SAME derivation the
+              repo panel below renders from, rather than `write_access` — which
+              is null both for "no repo" and for "connected before the
+              permission was recorded" and so cannot tell them apart. */}
           <AcceptanceChecklist
             acceptance={acceptance}
             stepNo={1}
@@ -396,6 +402,7 @@ const ProjectWorkspacePage: React.FC = () => {
             ticked={ticked}
             onToggle={toggleAcc}
             writeAccess={repo?.connect?.write_access ?? null}
+            repoConnected={repoConnectionState(repo) === 'connected'}
           />
 
           {/* HOW TO BUILD IT — the prompt and the repo are the same job (get to

@@ -8,6 +8,7 @@ import {
   StartedBuild,
 } from '../../../services/adminFlotationIntakeApi';
 import { getViewAsUrl } from '../../../services/adminOrgApi';
+import ProjectPlanReview from './ProjectPlanReview';
 
 /**
  * The management door into the one project intake.
@@ -42,6 +43,9 @@ export default function FlotationIntakePanel() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [state, setState] = useState<Record<string, RowState>>({});
+  // Which row has its plan open. One at a time: a table of expanded plans is a
+  // wall, and the question being asked is always about one project.
+  const [open, setOpen] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,7 +121,8 @@ export default function FlotationIntakePanel() {
                 const s = state[row.id] ?? EMPTY;
                 const built = row.build || s.started;
                 return (
-                  <tr key={row.id}>
+                  <React.Fragment key={row.id}>
+                  <tr>
                     <td>
                       <div className="fw-semibold">{row.title || 'Untitled'}</div>
                       <div className="small text-muted">
@@ -144,7 +149,10 @@ export default function FlotationIntakePanel() {
                     <td>
                       {built ? (
                         <div className="small">
-                          <StatusBadge label={s.started && !s.started.reused ? s.started.status : 'started'} tone="success" />
+                          <StatusBadge
+                            label={row.build?.assigned ? 'assigned' : 'held for review'}
+                            tone={row.build?.assigned ? 'success' : 'info'}
+                          />
                           <div className="text-muted">{row.build ? fmtWhen(row.build.started_at) : 'just now'}</div>
                         </div>
                       ) : s.error ? (
@@ -157,9 +165,19 @@ export default function FlotationIntakePanel() {
                     </td>
                     <td className="text-end text-nowrap">
                       {built && row.enrollment ? (
-                        <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void viewAs(row.enrollment!.id)}>
-                          <i className="ri-eye-line me-1" />See it as they would
-                        </button>
+                        <div className="d-inline-flex gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => setOpen((o) => (o === row.id ? null : row.id))}
+                          >
+                            <i className={`ri-arrow-${open === row.id ? 'up' : 'down'}-s-line me-1`} />
+                            {open === row.id ? 'Hide plan' : row.build?.assigned ? 'View plan' : 'Review plan'}
+                          </button>
+                          <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => void viewAs(row.enrollment!.id)}>
+                            <i className="ri-eye-line me-1" />See it as they would
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"
@@ -174,6 +192,22 @@ export default function FlotationIntakePanel() {
                       )}
                     </td>
                   </tr>
+
+                  {/* The SAME review the conversation shows, not a second idea of one.
+                      A build started here is held like any other admin-initiated build,
+                      so this is where it gets read and assigned. */}
+                  {open === row.id && built && (
+                    <tr>
+                      <td colSpan={6} className="bg-light">
+                        <ProjectPlanReview
+                          projectId={(row.build?.project_id || s.started?.projectId) as string}
+                          personName={row.lead?.name || row.lead?.email}
+                          onAssigned={() => void load()}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 );
               })}
             </tbody>

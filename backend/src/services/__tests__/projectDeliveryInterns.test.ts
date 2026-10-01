@@ -27,6 +27,22 @@ import { getProjectDelivery } from '../projectDeliveryService';
 /** The SQL of the first call — the projects query whose WHERE clause is under test. */
 const sqlOfFirstCall = (): string => String(mockQuery.mock.calls[0][0]);
 
+/**
+ * The statement split at its FROM, so a filter can be told from a column.
+ *
+ * `is_intern` selects the very predicate `internsOnly` filters on, so asserting against
+ * the whole statement can no longer distinguish "the board is scoped to interns" from
+ * "the board reports who is one" - and an assertion that cannot fail is not a check.
+ */
+const splitAtFrom = (): { select: string; where: string } => {
+  const sql = sqlOfFirstCall();
+  const at = sql.indexOf('FROM projects p');
+  if (at < 0) throw new Error('projects query no longer reads "FROM projects p"; this helper is stale');
+  return { select: sql.slice(0, at), where: sql.slice(at) };
+};
+const selectListOfFirstCall = (): string => splitAtFrom().select;
+const whereOfFirstCall = (): string => splitAtFrom().where;
+
 beforeEach(() => {
   jest.clearAllMocks();
   // No rows: the function returns early, which is all these assertions need.
@@ -54,14 +70,28 @@ describe('the interns filter', () => {
 
   it('is absent unless asked for, so the class board is untouched', async () => {
     await getProjectDelivery({});
-    expect(sqlOfFirstCall()).not.toContain('cohort_memberships');
+    // Checked against the WHERE clause, not the whole statement. `is_intern` is now
+    // SELECTED on every call, so "cohort_memberships appears somewhere" stopped being
+    // able to tell a filter from a column - it would pass with the filter deleted.
+    expect(whereOfFirstCall()).not.toContain('cohort_memberships');
   });
 
   it('composes with a cohort filter rather than replacing it', async () => {
     await getProjectDelivery({ cohortId: 'cohort-1', internsOnly: true });
-    const sql = sqlOfFirstCall();
-    expect(sql).toContain('e.cohort_id = :cohortId');
-    expect(sql).toContain('cohort_memberships');
+    const where = whereOfFirstCall();
+    expect(where).toContain('e.cohort_id = :cohortId');
+    expect(where).toContain('cohort_memberships');
+  });
+
+  it('SELECTS whether the owner is an intern on every call, filter or not', async () => {
+    // Ali, 2026-09-30: "All projects built moving fwd should be assigned to an intern
+    // above or shown below with drill down. Either way, I should be able to drill down
+    // into the projects." A board can only order by this if it is always answered.
+    for (const opts of [{}, { internsOnly: true }, { cohortId: 'cohort-1' }]) {
+      mockQuery.mockClear();
+      await getProjectDelivery(opts);
+      expect(selectListOfFirstCall()).toContain('AS is_intern');
+    }
   });
 
   it('keeps the existing exclusions, so fixtures do not return with it', async () => {

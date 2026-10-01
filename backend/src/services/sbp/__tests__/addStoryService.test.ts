@@ -22,7 +22,7 @@ jest.mock('../sbpOrchestrator', () => ({
 
 import {
   addStorySchema, buildStoryRevision, addStoryToPublishedBuild, AddStoryError, MAX_STORIES_PER_BUILD,
-  resolveOwnerAgent,
+  resolveOwnerAgent, requirementStatementFor, STUDENT_ADDED_CLUSTER,
 } from '../addStoryService';
 import { gatePlan, blockingViolations } from '../planGate';
 import type { BuildPlan, PlanStory } from '../planContract';
@@ -126,6 +126,99 @@ describe('buildStoryRevision — the story a student writes passes the same gate
 
   it('mints the requirement at should, so a new idea is never a must the skeleton has to cover', () => {
     expect(buildStoryRevision(publishedPlan(), input()).requirement.priority).toBe('should');
+  });
+});
+
+/**
+ * ── THE MINTED REQUIREMENT IS A REQUIREMENT, NOT A FEATURE NAME ─────────────
+ *
+ * Swati Raman added four stories to the Stress Test Review App on 2026-09-29.
+ * All four minted requirements took the story TITLE as their statement, so
+ * REQUIREMENTS.md — the artifact a student shows an employer — gained four
+ * entries reading like "Vector Store For Similar Reviews" among thirty
+ * sentences about what the system must do. All four also filed under
+ * "Marker Detection", which is simply what `requirements[0]` happened to be.
+ */
+describe('the requirement a student mints reads like the others', () => {
+  it('states an obligation, not the story title', () => {
+    const r = buildStoryRevision(publishedPlan(), input());
+    expect(r.requirement.statement).toBe(
+      'The system must let a coordinator export the roster.',
+    );
+    // The specific regression: the title must not BE the statement.
+    expect(r.requirement.statement).not.toBe(input().title);
+  });
+
+  it('files under its own heading, not whichever cluster happened to be first', () => {
+    const plan = publishedPlan();
+    // Every existing requirement here is clustered 'roster'. Copying that is
+    // what put Swati's marker-detection heading on four unrelated additions.
+    expect(new Set(plan.requirements.map((q) => q.cluster))).toEqual(new Set(['roster']));
+
+    const r = buildStoryRevision(plan, input());
+    expect(r.requirement.cluster).toBe(STUDENT_ADDED_CLUSTER);
+    expect(r.requirement.cluster).not.toBe(plan.requirements[0].cluster);
+  });
+
+  it('still passes the real gate with the new statement and cluster', () => {
+    const r = buildStoryRevision(publishedPlan(), input());
+    expect(blockingViolations(gatePlan(r.plan).violations)).toEqual([]);
+  });
+});
+
+describe('requirementStatementFor — grammatical on the narratives real builds carry', () => {
+  const stmt = (narrative: string, title = 'Some Feature Name') =>
+    requirementStatementFor({ title, narrative });
+
+  it('converts the dominant "As a <role>, I want to <verb>" shape', () => {
+    expect(stmt('As a coordinator, I want to export the roster, so that I can share it.'))
+      .toBe('The system must let a coordinator export the roster.');
+  });
+
+  it('does not make the system ask itself for permission', () => {
+    // Swati's STORY-017. "must let the review system recognise" is nonsense.
+    expect(stmt('As the review system, I want to recognise the real critique markers, so that a re-submission gets its own review.'))
+      .toBe('The system must recognise the real critique markers.');
+  });
+
+  it('falls back to the narrative rather than emit a broken sentence', () => {
+    // Marcus Zeno's STORY-005. "I want X to be Y" has no clean conversion:
+    // the naive one yields "The system must uncertain data to be flagged".
+    const n = 'As a data reviewer, I want uncertain data to be flagged for manual review, so that job seekers only see checked data.';
+    expect(stmt(n)).toBe(n);
+  });
+
+  it('never returns a bare noun phrase, whatever the title is', () => {
+    // The actual defect: a title reaching the document unchanged. Both
+    // branches are covered here — the one that converts and the one that
+    // falls back to the narrative — because the guarantee has to hold on
+    // BOTH, not just the shape the transform recognises.
+    const title = 'Vector Store For Similar Reviews';
+    for (const n of [
+      'As a reviewer, I want to reuse similar past reviews, so that feedback is consistent.',
+      'As a reviewer, I want past reviews surfaced automatically, so that feedback is consistent.',
+    ]) {
+      const out = requirementStatementFor({ title, narrative: n });
+      expect(out).not.toBe(title);
+      // Every outcome is a sentence, never a fragment.
+      expect(out.trim().endsWith('.')).toBe(true);
+    }
+  });
+
+  it('picks the right article and honours one the student already wrote', () => {
+    expect(stmt('As an administrator, I want to revoke a seat, so that billing stops.'))
+      .toBe('The system must let an administrator revoke a seat.');
+    expect(stmt('As a venue owner, I want to export attendance, so that I can invoice.'))
+      .toBe('The system must let a venue owner export attendance.');
+  });
+
+  it('uses the title only when there is no narrative at all', () => {
+    // Defensive only, and deliberately NOT held to the sentence guarantee
+    // above: `addStorySchema` requires a narrative of at least 20 characters,
+    // so no request through the route can reach this branch. It exists so a
+    // future non-HTTP caller gets the title rather than an empty statement.
+    expect(requirementStatementFor({ title: 'Export CSV', narrative: '' })).toBe('Export CSV');
+    expect(addStorySchema.shape.narrative.safeParse('').success).toBe(false);
   });
 });
 

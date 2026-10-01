@@ -58,11 +58,16 @@ export const InternshipProjectsMode: React.FC<{ onOpenApplicant: (id: string) =>
         one page invites the two to disagree.
       */}
       <SectionCard
-        title="Intern projects"
+        title="Projects"
         icon="folder-chart-line"
-        subtitle="Every project an intern holds, who it belongs to, and how close it is to being a case study"
+        subtitle="Every project built here, interns first, with who it belongs to and how close it is to being a case study"
       >
-        <ProjectDeliveryView internsOnly hideWithoutProject />
+        {/* `internsFirst`, not `internsOnly`: Ali, 2026-09-30 — "All projects built moving
+            fwd should be assigned to an intern above or shown below with drill down.
+            Either way, I should be able to drill down into the projects." Filtering to
+            interns made a project built for a prospect vanish from the only board that
+            lists projects, rather than appear lower down it. */}
+        <ProjectDeliveryView internsFirst hideWithoutProject />
       </SectionCard>
 
       <ImportProjectFromRepo />

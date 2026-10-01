@@ -59,6 +59,32 @@ router.get('/api/admin/flotation/understandings', requireAdmin, async (_req: Req
     const enrollments: any[] = emails.length ? await Enrollment.findAll({ where: { email: { [Op.in]: emails } } }) : [];
     const enrollmentByEmail = new Map(enrollments.map((e) => [String(e.email || '').toLowerCase(), e]));
 
+    // Which of these builds has actually been published to the person.
+    //
+    // Builds are held for review now, so "has a project" and "they can see it" are two
+    // different facts and the row has to carry both — a list that says "built" for a plan
+    // still waiting on a reviewer is telling the reviewer their job is done. ONE query for
+    // all of them rather than one per row: this list runs to a hundred.
+    const projectIds = records
+      .map((r) => (r.build_handoff || (r.scope as any)?.build || null)?.project_id)
+      .filter(Boolean) as string[];
+    // FAILS SOFT. This decides a badge; the list is the thing the page is for. A reviewer
+    // who cannot see their enquiries because a status lookup broke is strictly worse off
+    // than one whose badges all read "held".
+    const publishedIds = new Set<string>();
+    if (projectIds.length) {
+      try {
+        const { sequelize } = await import('../../config/database');
+        const [rows] = await sequelize.query(
+          `select distinct project_id from build_plans where status = 'published' and project_id in (:ids)`,
+          { replacements: { ids: projectIds } },
+        );
+        for (const row of rows as Array<{ project_id: string }>) publishedIds.add(row.project_id);
+      } catch (err: any) {
+        console.warn('[AdminIntake] could not read which builds are published:', err?.message);
+      }
+    }
+
     res.json({
       understandings: records.map((r) => {
         const lead = r.lead_id ? leadById.get(r.lead_id) : null;
@@ -72,7 +98,14 @@ router.get('/api/admin/flotation/understandings', requireAdmin, async (_req: Req
           confirmed_at: r.confirmed_at,
           lead: lead ? { id: lead.id, name: lead.name, email: lead.email, company: lead.company } : null,
           enrollment: enrollment ? { id: enrollment.id, tier: enrollment.tier, cohort_id: enrollment.cohort_id } : null,
-          build: build ? { project_id: build.project_id, started_at: build.started_at } : null,
+          build: build
+            ? {
+              project_id: build.project_id,
+              started_at: build.started_at,
+              /** Published and materialised, so the person can actually see it. */
+              assigned: publishedIds.has(build.project_id),
+            }
+            : null,
         };
       }),
     });
@@ -110,7 +143,16 @@ router.post('/api/admin/flotation/understandings/:id/build', requireAdmin, async
       enrollmentId = enrollment.id;
     }
 
+    // HELD, exactly as the conversation door holds.
+    //
+    //     "the Build this project button should be the same across the admin and student
+    //      side ... built the exact same."  (Ali, 2026-09-30)
+    //
+    // Both admin surfaces start a build; before this they disagreed about what happened
+    // next, and nothing on screen said which one you were getting. An admin building for
+    // somebody else reviews first, wherever the button was.
     const result = await startBuildFromUnderstanding({
+      holdForReview: true,
       recordId: req.params.id as string,
       enrollmentId: enrollmentId!,
       requireConfirmed: body.require_confirmed === true,
